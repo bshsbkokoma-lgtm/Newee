@@ -25,7 +25,12 @@
     <!-- Firebase Imports -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getAuth, 
+            signInAnonymously, 
+            onAuthStateChanged,
+            createUserWithEmailAndPassword, // Added for permanent sign-in
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
             getFirestore, 
             collection, 
@@ -35,12 +40,11 @@
             orderBy, 
             Timestamp,
             doc,
-            deleteDoc // *** IMPORTED for Deletion ***
+            deleteDoc
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        // import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================================
-        // *** 1. การตั้งค่า Firebase ของคุณ (นำมาจากข้อมูลผู้ใช้) ***
+        // *** 1. การตั้งค่า Firebase ของคุณ (Config) ***
         // =================================================================================
         const FIREBASE_CONFIG = {
             apiKey: "AIzaSyDMFnadRdI2hQTqOKOC-3cZcNCN4K0TAYQ",
@@ -51,6 +55,12 @@
             appId: "1:435556329017:web:6bb964b4931cc987ec8fe8"
         };
         
+        // =================================================================================
+        // *** 2. รหัสเจ้าของเว็บไซต์ (ADMIN UID) ***
+        // *** !!! กรุณาเปลี่ยนเป็นรหัสผู้ใช้เต็มของคุณเองที่คัดลอกมาแล้ว !!! ***
+        // =================================================================================
+        const OWNER_UID = "ใส่รหัสเจ้าของ (Owner ID) ที่คัดลอกมาของคุณที่นี่"; 
+
         const appId = FIREBASE_CONFIG.projectId || 'default-app-id'; 
         
         // Application State
@@ -67,13 +77,33 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
+                // Try to sign in anonymously first
                 await signInAnonymously(auth);
 
                 onAuthStateChanged(auth, (user) => {
                     isAuthReady = true;
                     if (user) {
                         currentUserId = user.uid;
-                        document.getElementById('user-id-display').textContent = `รหัสผู้ใช้: ${currentUserId.substring(0, 8)}...`;
+                        const isAdmin = currentUserId === OWNER_UID;
+                        
+                        // Log full ID for manual copy if needed
+                        console.log("=========================================");
+                        console.log("คัดลอกรหัสผู้ใช้เต็ม (FULL USER ID) เพื่อตั้งเป็น ADMIN:");
+                        console.log(currentUserId);
+                        console.log("=========================================");
+
+                        document.getElementById('user-id-display').textContent = 
+                            `รหัสผู้ใช้: ${currentUserId.substring(0, 8)}... ${isAdmin ? '(ADMIN)' : ''}`;
+                        
+                        document.getElementById('full-user-id').textContent = currentUserId;
+                        
+                        // Show/Hide Admin Upgrade section based on persistence
+                        if (!user.email && !isAdmin) { // If not permanent and not admin, show upgrade option
+                            document.getElementById('admin-upgrade-section').classList.remove('hidden');
+                        } else {
+                            document.getElementById('admin-upgrade-section').classList.add('hidden');
+                        }
+                        
                         setupRealtimeListener(db);
                     } else {
                         currentUserId = crypto.randomUUID(); 
@@ -88,6 +118,49 @@
                 errorDisplay.classList.remove('hidden');
             }
         };
+        
+        /**
+         * Function to upgrade current anonymous user to permanent email/password user.
+         */
+        const upgradeToAdmin = async () => {
+            const emailInput = document.getElementById('admin-email');
+            const passwordInput = document.getElementById('admin-password');
+            const upgradeButton = document.getElementById('upgrade-button');
+            
+            const email = emailInput.value.trim();
+            const password = passwordInput.value.trim();
+            
+            if (!email || password.length < 6) {
+                displayPopup('โปรดใส่ E-mail ที่ถูกต้อง และ Password อย่างน้อย 6 ตัวอักษร', 'error');
+                return;
+            }
+
+            upgradeButton.disabled = true;
+            upgradeButton.textContent = 'กำลังดำเนินการ...';
+            
+            try {
+                // This creates a new permanent account and links it to the current anonymous session.
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                
+                // Now, the current user ID is permanently linked to this email/password.
+                displayPopup('อัปเกรดบัญชีถาวรสำเร็จ! UID นี้จะไม่เปลี่ยนอีกต่อไป', 'success');
+                
+                // Set the current permanent UID as the OWNER_UID in the code (for future reference)
+                // Note: You still need to manually update the Firebase Security Rules.
+                console.log(`NEW PERMANENT ADMIN UID: ${userCredential.user.uid}`);
+                
+                // Reload or simply hide the section and update the display
+                document.getElementById('admin-upgrade-section').classList.add('hidden');
+                
+            } catch (error) {
+                console.error("Error upgrading account:", error.code, error.message);
+                displayPopup(`การอัปเกรดล้มเหลว: ${error.message}`, 'error');
+            } finally {
+                upgradeButton.disabled = false;
+                upgradeButton.textContent = 'ตั้งค่าบัญชี Admin ถาวร';
+            }
+        };
+
 
         const sanitizeHtml = (str) => {
             if (typeof str !== 'string') return '';
@@ -144,25 +217,19 @@
             }
         };
 
-        /**
-         * *** NEW FUNCTION ***
-         * Deletes a message from Firestore by ID.
-         * @param {string} messageId The ID of the document to delete.
-         */
         const deleteMessage = async (messageId) => {
             if (!db || !currentUserId) {
                 displayPopup('ระบบยังไม่พร้อมใช้งาน', 'error');
                 return;
             }
 
-            // Custom "Confirm" box replacement
             const userConfirmed = await showCustomConfirmation('คุณแน่ใจหรือไม่ว่าต้องการลบข้อความนี้?');
             if (!userConfirmed) return;
 
             try {
                 const docRef = doc(db, getCollectionPath(), messageId);
                 await deleteDoc(docRef);
-                displayPopup('ลบข้อความของคุณแล้ว!', 'success');
+                displayPopup('ลบข้อความสำเร็จ!', 'success');
             } catch (error) {
                 console.error("Error deleting message: ", error);
                 displayPopup('ลบไม่สำเร็จ: คุณอาจไม่มีสิทธิ์ลบข้อความนี้', 'error');
@@ -196,8 +263,10 @@
                 messages.forEach(msg => {
                     const messageElement = createMessageElement(msg);
                     messagesContainer.appendChild(messageElement);
-                    // Attach event listener after adding to DOM
-                    if (msg.userId === currentUserId) {
+                    
+                    const canDelete = msg.userId === currentUserId || currentUserId === OWNER_UID;
+
+                    if (canDelete) {
                         const deleteButton = messageElement.querySelector(`#delete-btn-${msg.id}`);
                         if (deleteButton) {
                             deleteButton.addEventListener('click', () => deleteMessage(msg.id));
@@ -217,15 +286,17 @@
             const time = msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : 'เมื่อสักครู่';
             
             const isCurrentUser = msg.userId === currentUserId;
+            // Admin can delete, or current user can delete their own
+            const canDelete = isCurrentUser || currentUserId === OWNER_UID; 
             
             const messageCard = document.createElement('div');
             messageCard.className = `p-4 mb-3 rounded-xl shadow-md transition duration-200 ease-in-out transform hover:scale-[1.01] ${isCurrentUser ? 'bg-indigo-100 border-indigo-500 border-l-4' : 'bg-white border-gray-200 border-l-4'}`;
             
             let deleteButtonHtml = '';
-            if (isCurrentUser) {
+            if (canDelete) { // Show button if user is the author OR the admin
                 deleteButtonHtml = `
                     <button id="delete-btn-${msg.id}" class="text-red-500 hover:text-red-700 transition duration-150 p-1 rounded-full hover:bg-red-200">
-                        <!-- Trash icon (Lucide equivalent) -->
+                        <!-- Trash icon -->
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     </button>
                 `;
@@ -251,9 +322,6 @@
 
         // --- UI Utility Functions ---
 
-        /**
-         * Displays a temporary popup notification.
-         */
         const displayPopup = (message, type) => {
             const popup = document.getElementById('popup-notification');
             const color = type === 'success' ? 'bg-green-500' : 'bg-red-500';
@@ -271,9 +339,6 @@
             }, 3000); 
         };
 
-        /**
-         * Replaces window.confirm() with a custom modal for better UI.
-         */
         const showCustomConfirmation = (message) => {
             return new Promise(resolve => {
                 const modal = document.getElementById('confirm-modal');
@@ -298,6 +363,29 @@
                 document.getElementById('confirm-no').addEventListener('click', handleCancel);
             });
         };
+        
+        const copyFullId = () => {
+            const fullId = document.getElementById('full-user-id').textContent;
+            if (fullId && navigator.clipboard) {
+                navigator.clipboard.writeText(fullId)
+                    .then(() => displayPopup('คัดลอกรหัสผู้ใช้เต็มแล้ว!', 'success'))
+                    .catch(err => {
+                        console.error('Failed to copy text:', err);
+                        displayPopup('คัดลอกไม่สำเร็จ ลองกดคัดลอกจาก Console', 'error');
+                    });
+            } else if (fullId) {
+                // Fallback for environments without navigator.clipboard
+                const el = document.createElement('textarea');
+                el.value = fullId;
+                document.body.appendChild(el);
+                el.select();
+                document.execCommand('copy');
+                document.body.removeChild(el);
+                displayPopup('คัดลอกรหัสผู้ใช้เต็มแล้ว!', 'success');
+            } else {
+                displayPopup('รหัสยังไม่พร้อมใช้งาน', 'error');
+            }
+        };
 
 
         // --- Event Listeners and Initialization ---
@@ -315,6 +403,13 @@
                     e.preventDefault();
                     sendMessage();
                 }
+            });
+
+            document.getElementById('copy-id-button').addEventListener('click', copyFullId);
+            
+            document.getElementById('upgrade-button').addEventListener('click', (e) => {
+                e.preventDefault();
+                upgradeToAdmin();
             });
         };
     </script>
@@ -370,6 +465,35 @@
             </button>
         </section>
 
+        <!-- Admin Upgrade Section -->
+        <section id="admin-upgrade-section" class="mb-8 p-5 bg-yellow-50 border-2 border-yellow-300 rounded-xl shadow-md hidden">
+            <h2 class="text-xl font-semibold text-yellow-800 mb-3">🛠️ ตั้งค่าบัญชี Admin ถาวร</h2>
+            <p class="text-sm text-yellow-700 mb-4">
+                ใช้ฟังก์ชันนี้เพื่อผูกรหัสผู้ใช้ปัจจุบันของคุณเข้ากับ E-mail/Password เพื่อให้รหัสผู้ใช้นี้ (UID) **ไม่เปลี่ยนแปลง** เมื่อคุณล้าง Cache หรือเปลี่ยนอุปกรณ์
+                คุณจะต้องนำรหัส UID นี้ไปใส่ใน **Firebase Security Rules** เพื่อให้มีสิทธิ์ลบข้อความทั้งหมดได้
+            </p>
+            
+            <!-- Email Input -->
+            <div class="mb-3">
+                <label for="admin-email" class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
+                <input type="email" id="admin-email" class="w-full p-2 border rounded-lg focus:ring-1 focus:ring-yellow-500" placeholder="admin@example.com">
+            </div>
+            
+            <!-- Password Input -->
+            <div class="mb-4">
+                <label for="admin-password" class="block text-sm font-medium text-gray-700 mb-1">Password (อย่างน้อย 6 ตัว)</label>
+                <input type="password" id="admin-password" class="w-full p-2 border rounded-lg focus:ring-1 focus:ring-yellow-500">
+            </div>
+
+            <!-- Upgrade Button -->
+            <button 
+                id="upgrade-button" 
+                class="w-full py-2 px-4 bg-yellow-500 text-white font-bold rounded-lg shadow-md hover:bg-yellow-600 transition duration-200 disabled:bg-yellow-300"
+            >
+                ตั้งค่าบัญชี Admin ถาวร
+            </button>
+        </section>
+
         <!-- Leaderboard Section -->
         <section>
             <h2 class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">กระดานข้อความล่าสุด</h2>
@@ -394,8 +518,19 @@
 
         <!-- Footer/Info -->
         <footer class="mt-8 pt-4 border-t text-center text-xs text-gray-400">
-            <p id="user-id-display">กำลังเชื่อมต่อ...</p>
-            <p>ข้อความทั้งหมดจะถูกจัดเก็บและแสดงผลแบบเรียลไทม์ทั่วโลก</p>
+            <p id="user-id-display" class="mb-2">กำลังเชื่อมต่อ...</p>
+            
+            <div class="flex flex-col items-center space-y-2">
+                <span id="full-user-id" class="hidden text-[10px] text-gray-300"></span> 
+
+                <button id="copy-id-button" class="flex items-center space-x-1 px-3 py-1 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition duration-150">
+                    <!-- Copy icon -->
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                    <span>คัดลอกรหัส Admin (รหัสเต็ม)</span>
+                </button>
+            </div>
+
+            <p class="mt-2">ข้อความทั้งหมดจะถูกจัดเก็บและแสดงผลแบบเรียลไทม์ทั่วโลก</p>
         </footer>
     </div>
     
