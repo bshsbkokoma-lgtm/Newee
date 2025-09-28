@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>กระดานข้อความเรียลไทม์ทั่วโลก</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use Inter Font -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f9;
+        }
+        /* Custom scrollbar styling for the message list */
+        #messages-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        #messages-container::-webkit-scrollbar-thumb {
+            background: #a0aec0;
+            border-radius: 3px;
+        }
+    </style>
+    <!-- Firebase Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            collection, 
+            addDoc, 
+            onSnapshot, 
+            query, 
+            orderBy, 
+            Timestamp 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"; // สามารถเปิดใช้งานเพื่อดีบั๊กได้
+
+        // =================================================================================
+        // *** 1. การตั้งค่า Firebase ของคุณ (ถูกวางค่าจากผู้ใช้แล้ว) ***
+        // =================================================================================
+        const FIREBASE_CONFIG = {
+            apiKey: "AIzaSyDMFnadRdI2hQTqOKOC-3cZcNCN4K0TAYQ",
+            authDomain: "global-61284.firebaseapp.com",
+            projectId: "global-61284",
+            storageBucket: "global-61284.firebasestorage.app",
+            messagingSenderId: "435556329017",
+            appId: "1:435556329017:web:6bb964b4931cc987ec8fe8"
+        };
+        
+        // ใช้ Project ID เป็นตัวระบุแอปพลิเคชันสำหรับ Firestore Path
+        const appId = FIREBASE_CONFIG.projectId || 'default-app-id'; 
+        
+        // Application State
+        let db;
+        let auth;
+        let currentUserId = null;
+        let isAuthReady = false;
+
+        // --- Core Application Logic ---
+
+        /**
+         * Initializes Firebase and authenticates the user.
+         */
+        const initializeFirebase = async () => {
+            try {
+                const app = initializeApp(FIREBASE_CONFIG);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // 1. Authenticate the user (ลงชื่อเข้าใช้แบบ Anonymous)
+                await signInAnonymously(auth);
+
+                // 2. Setup Auth State Listener
+                onAuthStateChanged(auth, (user) => {
+                    isAuthReady = true;
+                    if (user) {
+                        currentUserId = user.uid;
+                        // แสดง User ID แบบย่อ (สำคัญสำหรับ Multi-User App)
+                        document.getElementById('user-id-display').textContent = `รหัสผู้ใช้: ${currentUserId.substring(0, 8)}...`;
+                        setupRealtimeListener(db);
+                    } else {
+                        currentUserId = crypto.randomUUID(); // Fallback
+                        document.getElementById('user-id-display').textContent = 'Error: Not signed in';
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization or authentication failed:", error);
+                const errorDisplay = document.getElementById('error-message');
+                errorDisplay.textContent = `เกิดข้อผิดพลาดในการเชื่อมต่อ: ${error.message} (โปรดตรวจสอบ FIREBASE_CONFIG และ Security Rules)`;
+                errorDisplay.classList.remove('hidden');
+            }
+        };
+
+        /**
+         * Cleans up string input to prevent XSS.
+         */
+        const sanitizeHtml = (str) => {
+            if (typeof str !== 'string') return '';
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+        };
+
+        /**
+         * Sends the user's message to the Firestore database.
+         */
+        const sendMessage = async () => {
+            if (!db || !currentUserId || !isAuthReady) {
+                displayPopup('ระบบยังไม่พร้อมใช้งาน กรุณารอสักครู่', 'error');
+                return;
+            }
+
+            const nicknameInput = document.getElementById('nickname-input');
+            const messageInput = document.getElementById('message-input');
+            
+            const nickname = sanitizeHtml(nicknameInput.value.trim());
+            const message = sanitizeHtml(messageInput.value.trim());
+
+            if (nickname.length === 0) {
+                displayPopup('กรุณาใส่ชื่อเล่นของคุณก่อน', 'error');
+                nicknameInput.focus();
+                return;
+            }
+
+            if (message.length === 0) {
+                displayPopup('กรุณาพิมพ์ข้อความที่คุณต้องการส่ง', 'error');
+                messageInput.focus();
+                return;
+            }
+
+            const sendButton = document.getElementById('send-button');
+            sendButton.disabled = true;
+            sendButton.textContent = 'กำลังส่ง...';
+
+            try {
+                // Path สำหรับข้อมูลสาธารณะทั่วโลก: /artifacts/{appId}/public/data/global_messages
+                const collectionPath = `artifacts/${appId}/public/data/global_messages`;
+                
+                await addDoc(collection(db, collectionPath), {
+                    nickname: nickname,
+                    message: message,
+                    userId: currentUserId,
+                    timestamp: Timestamp.now(), 
+                });
+
+                // Clear the message input only, keep nickname for convenience
+                messageInput.value = '';
+                displayPopup('ส่งข้อความแล้ว!', 'success');
+
+            } catch (error) {
+                console.error("Error sending message: ", error);
+                displayPopup('ส่งข้อความไม่สำเร็จ: โปรดตรวจสอบ Firestore Security Rules ของคุณ', 'error');
+            } finally {
+                sendButton.disabled = false;
+                sendButton.textContent = 'ส่งข้อความ';
+            }
+        };
+
+        /**
+         * Sets up a real-time listener for messages and updates the UI.
+         */
+        const setupRealtimeListener = (firestoreDb) => {
+            const collectionPath = `artifacts/${appId}/public/data/global_messages`;
+            const q = query(
+                collection(firestoreDb, collectionPath),
+                orderBy("timestamp", "desc") // Sort by newest message first
+            );
+
+            const messagesContainer = document.getElementById('messages-container');
+            const emptyState = document.getElementById('empty-state');
+
+            onSnapshot(q, (snapshot) => {
+                const messages = [];
+                snapshot.forEach((doc) => {
+                    messages.push({ id: doc.id, ...doc.data() });
+                });
+
+                messagesContainer.innerHTML = ''; // Clear existing messages
+                
+                if (messages.length === 0) {
+                    emptyState.classList.remove('hidden');
+                    return;
+                } else {
+                    emptyState.classList.add('hidden');
+                }
+
+                messages.forEach(msg => {
+                    const messageElement = createMessageElement(msg);
+                    messagesContainer.appendChild(messageElement);
+                });
+            }, (error) => {
+                console.error("Error listening to messages:", error);
+                displayPopup(`เกิดข้อผิดพลาดในการดึงข้อมูล: ${error.message}`, 'error');
+            });
+        };
+
+        /**
+         * Creates an HTML element for a single message.
+         */
+        const createMessageElement = (msg) => {
+            const time = msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : 'เมื่อสักครู่';
+            
+            const isCurrentUser = msg.userId === currentUserId;
+            
+            const messageCard = document.createElement('div');
+            messageCard.className = `p-4 mb-3 rounded-xl shadow-md transition duration-200 ease-in-out transform hover:scale-[1.01] ${isCurrentUser ? 'bg-indigo-100 border-indigo-500 border-l-4' : 'bg-white border-gray-200 border-l-4'}`;
+            
+            messageCard.innerHTML = `
+                <div class="flex justify-between items-start">
+                    <p class="text-lg font-bold ${isCurrentUser ? 'text-indigo-700' : 'text-gray-800'}">
+                        ${sanitizeHtml(msg.nickname)}
+                        ${isCurrentUser ? '<span class="text-xs font-normal ml-2 px-2 py-0.5 bg-indigo-500 text-white rounded-full">คุณ</span>' : ''}
+                    </p>
+                    <span class="text-xs text-gray-500 mt-1">${time}</span>
+                </div>
+                <p class="text-sm mt-1 text-gray-600 break-words">${sanitizeHtml(msg.message)}</p>
+            `;
+            return messageCard;
+        };
+
+        // --- UI Utility Functions ---
+
+        /**
+         * Displays a temporary popup notification.
+         */
+        const displayPopup = (message, type) => {
+            const popup = document.getElementById('popup-notification');
+            const color = type === 'success' ? 'bg-green-500' : 'bg-red-500';
+            popup.textContent = message;
+            // Reset class for re-displaying
+            popup.className = `fixed bottom-4 right-4 p-3 rounded-lg shadow-xl text-white z-50 transition-transform duration-300 transform translate-y-20 opacity-0 ${color}`;
+            
+            // Show the popup
+            setTimeout(() => {
+                popup.classList.remove('translate-y-20', 'opacity-0');
+                popup.classList.add('translate-y-0', 'opacity-100');
+            }, 50);
+
+            // Hide the popup
+            setTimeout(() => {
+                popup.classList.add('translate-y-20', 'opacity-0');
+            }, 3000); 
+        };
+
+
+        // --- Event Listeners and Initialization ---
+
+        window.onload = () => {
+            initializeFirebase();
+
+            // Setup button click handler
+            document.getElementById('send-button').addEventListener('click', (e) => {
+                e.preventDefault();
+                sendMessage();
+            });
+
+            // Allow Enter key to submit message from the message input
+            document.getElementById('message-input').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
+        };
+    </script>
+</head>
+<body class="min-h-screen p-4 sm:p-8 flex flex-col items-center">
+
+    <div class="w-full max-w-2xl bg-white rounded-2xl shadow-2xl p-6 md:p-8">
+        <!-- Header -->
+        <header class="mb-6 border-b pb-4">
+            <h1 class="text-3xl font-extrabold text-gray-900 mb-1">
+                กระดานข้อความเรียลไทม์ (Global Leaderboard)
+            </h1>
+            <p class="text-gray-500">
+                พิมพ์ชื่อเล่นและข้อความของคุณ ข้อความจะปรากฏให้ทุกคนเห็นทันที!
+            </p>
+        </header>
+
+        <!-- Input Section -->
+        <section class="mb-8 p-5 bg-indigo-50 rounded-xl shadow-inner">
+            <h2 class="text-xl font-semibold text-indigo-700 mb-3">โพสต์ข้อความใหม่</h2>
+            
+            <!-- Nickname Input -->
+            <div class="mb-4">
+                <label for="nickname-input" class="block text-sm font-medium text-gray-700 mb-1">ชื่อเล่นของคุณ (Nickname)</label>
+                <input 
+                    type="text" 
+                    id="nickname-input" 
+                    placeholder="เช่น: ยิ้มสู้, แมวอ้วน" 
+                    maxlength="20"
+                    class="w-full p-3 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-150"
+                >
+            </div>
+            
+            <!-- Message Input -->
+            <div class="mb-4">
+                <label for="message-input" class="block text-sm font-medium text-gray-700 mb-1">ข้อความที่ต้องการส่ง</label>
+                <textarea 
+                    id="message-input" 
+                    placeholder="พิมพ์ข้อความของคุณที่นี่..." 
+                    maxlength="200"
+                    rows="3"
+                    class="w-full p-3 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 resize-none"
+                ></textarea>
+                <p class="text-xs text-gray-500 mt-1">สูงสุด 200 ตัวอักษร</p>
+            </div>
+
+            <!-- Submit Button -->
+            <button 
+                id="send-button" 
+                class="w-full py-3 px-4 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50 transition duration-200 disabled:bg-indigo-400"
+            >
+                ส่งข้อความ
+            </button>
+        </section>
+
+        <!-- Leaderboard Section -->
+        <section>
+            <h2 class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">กระดานข้อความล่าสุด</h2>
+            
+            <div id="error-message" class="p-4 bg-red-100 text-red-700 rounded-lg mb-4 text-sm font-medium hidden">
+                <!-- Error messages will be placed here -->
+            </div>
+            
+            <!-- Messages Container (The "Leaderboard") -->
+            <div id="messages-container" class="max-h-[50vh] overflow-y-auto pr-2">
+                <!-- Messages will be injected here by JavaScript -->
+            </div>
+            
+            <!-- Empty State -->
+            <div id="empty-state" class="text-center p-8 text-gray-500 bg-gray-50 rounded-xl mt-4">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                <p class="font-medium">ยังไม่มีข้อความ! มาเป็นคนแรกที่โพสต์เลย!</p>
+            </div>
+        </section>
+
+        <!-- Footer/Info -->
+        <footer class="mt-8 pt-4 border-t text-center text-xs text-gray-400">
+            <p id="user-id-display">กำลังเชื่อมต่อ...</p>
+            <p>ข้อความทั้งหมดจะถูกจัดเก็บและแสดงผลแบบเรียลไทม์ทั่วโลก</p>
+        </footer>
+    </div>
+    
+    <!-- Popup Notification -->
+    <div id="popup-notification" class="fixed bottom-4 right-4 p-3 rounded-lg shadow-xl text-white z-50 transition-transform duration-300 transform translate-y-20 opacity-0">
+        <!-- Notification message will appear here -->
+    </div>
+</body>
+</html>
+
