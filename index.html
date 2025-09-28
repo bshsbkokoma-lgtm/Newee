@@ -21,10 +21,6 @@
             background: #a0aec0;
             border-radius: 3px;
         }
-        .trash-item {
-            border-left: 4px solid #f97316; /* Orange border for deleted items */
-            background-color: #fff7ed;
-        }
     </style>
     <!-- Firebase Imports -->
     <script type="module">
@@ -43,10 +39,7 @@
             orderBy, 
             Timestamp,
             doc,
-            deleteDoc,
-            updateDoc,
-            where,
-            setLogLevel // Added for debugging
+            deleteDoc
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================================
@@ -74,14 +67,10 @@
         let auth;
         let currentUserId = null;
         let isAuthReady = false;
-        let isAdmin = false; 
         
         // --- Core Application Logic ---
 
         const initializeFirebase = async () => {
-             // Enable debug logging for Firestore to see potential rule/index errors
-             setLogLevel('Debug'); 
-             
             try {
                 const app = initializeApp(FIREBASE_CONFIG);
                 db = getFirestore(app);
@@ -94,11 +83,14 @@
                     isAuthReady = true;
                     if (user) {
                         currentUserId = user.uid;
-                        isAdmin = currentUserId === OWNER_UID; 
+                        const isAdmin = currentUserId === OWNER_UID;
                         
+                        // Log full ID for manual copy if needed (in case the current one expires)
                         console.log("=========================================");
-                        console.log(`สถานะ Admin: ${isAdmin ? 'เป็น ADMIN' : 'ผู้ใช้ทั่วไป'}`);
-                        console.log(`รหัสผู้ใช้ปัจจุบัน: ${currentUserId}`);
+                        console.log("รหัสผู้ใช้ปัจจุบัน (Current UID):");
+                        console.log(currentUserId);
+                        console.log("รหัส ADMIN ที่ถูกกำหนด (Defined ADMIN UID):");
+                        console.log(OWNER_UID);
                         console.log("=========================================");
 
                         document.getElementById('user-id-display').textContent = 
@@ -106,28 +98,17 @@
                         
                         document.getElementById('full-user-id').textContent = currentUserId;
                         
-                        // Show admin features if necessary
-                        if (isAdmin) {
-                            document.getElementById('admin-features-toggle').classList.remove('hidden');
-                        }
-                        
-                        // Start listeners after auth is ready
                         setupRealtimeListener(db);
-                        if (isAdmin) {
-                            setupAdminTrashListener(db); 
-                        }
                     } else {
-                        // This case should be rare since we sign in anonymously
-                        currentUserId = 'anonymous-' + crypto.randomUUID(); 
-                        document.getElementById('user-id-display').textContent = 'เชื่อมต่อแบบไม่ระบุตัวตน...';
-                        setupRealtimeListener(db); // Still try to load data
+                        currentUserId = crypto.randomUUID(); 
+                        document.getElementById('user-id-display').textContent = 'Error: Not signed in';
                     }
                 });
 
             } catch (error) {
                 console.error("Firebase initialization or authentication failed:", error);
                 const errorDisplay = document.getElementById('error-message');
-                errorDisplay.textContent = `เกิดข้อผิดพลาดในการเชื่อมต่อ (Init): ${error.message} (โปรดตรวจสอบ FIREBASE_CONFIG และ Rules)`;
+                errorDisplay.textContent = `เกิดข้อผิดพลาดในการเชื่อมต่อ: ${error.message} (โปรดตรวจสอบ FIREBASE_CONFIG และ Security Rules)`;
                 errorDisplay.classList.remove('hidden');
             }
         };
@@ -151,8 +132,15 @@
             const nickname = sanitizeHtml(nicknameInput.value.trim());
             const message = sanitizeHtml(messageInput.value.trim());
 
-            if (nickname.length === 0 || message.length === 0) {
-                displayPopup('กรุณากรอกข้อมูลให้ครบถ้วน', 'error');
+            if (nickname.length === 0) {
+                displayPopup('กรุณาใส่ชื่อเล่นของคุณก่อน', 'error');
+                nicknameInput.focus();
+                return;
+            }
+
+            if (message.length === 0) {
+                displayPopup('กรุณาพิมพ์ข้อความที่คุณต้องการส่ง', 'error');
+                messageInput.focus();
                 return;
             }
 
@@ -161,13 +149,11 @@
             sendButton.textContent = 'กำลังส่ง...';
 
             try {
-                // Ensure we only store fields allowed by rules
                 await addDoc(collection(db, getCollectionPath()), {
                     nickname: nickname,
                     message: message,
                     userId: currentUserId,
                     timestamp: Timestamp.now(), 
-                    isDeleted: false 
                 });
 
                 messageInput.value = '';
@@ -182,70 +168,30 @@
             }
         };
 
-        // Soft Delete: Mark as deleted
-        const softDeleteMessage = async (messageId) => {
+        const deleteMessage = async (messageId) => {
             if (!db || !currentUserId) {
                 displayPopup('ระบบยังไม่พร้อมใช้งาน', 'error');
                 return;
             }
 
-            const userConfirmed = await showCustomConfirmation('คุณแน่ใจหรือไม่ว่าต้องการซ่อนข้อความนี้?');
+            const userConfirmed = await showCustomConfirmation('คุณแน่ใจหรือไม่ว่าต้องการลบข้อความนี้?');
             if (!userConfirmed) return;
 
             try {
                 const docRef = doc(db, getCollectionPath(), messageId);
-                // Non-admin can only update their own post to set isDeleted: true
-                await updateDoc(docRef, { isDeleted: true });
-                displayPopup('ซ่อนข้อความสำเร็จ (ย้ายไปถังขยะ Admin แล้ว)!', 'success');
+                await deleteDoc(docRef);
+                displayPopup('ลบข้อความสำเร็จ!', 'success');
             } catch (error) {
-                console.error("Error soft deleting message (likely rule violation): ", error);
-                displayPopup('การซ่อนล้มเหลว: กฎความปลอดภัยไม่อนุญาตให้คุณลบ (นอกจากเป็น Admin)', 'error');
-            }
-        };
-        
-        // Admin-only function to RESTORE a message
-        const restoreMessage = async (messageId) => {
-            if (!db || !isAdmin) {
-                displayPopup('คุณไม่มีสิทธิ์กู้คืนข้อความ', 'error');
-                return;
-            }
-            try {
-                const docRef = doc(db, getCollectionPath(), messageId);
-                await updateDoc(docRef, { isDeleted: false });
-                displayPopup('กู้คืนข้อความกลับสู่กระดานหลักสำเร็จ!', 'success');
-            } catch (error) {
-                console.error("Error restoring message: ", error);
-                displayPopup('กู้คืนข้อความล้มเหลว', 'error');
-            }
-        };
-        
-        // Admin-only function to PERMANENTLY DELETE a message
-        const purgeMessage = async (messageId) => {
-            if (!db || !isAdmin) {
-                displayPopup('คุณไม่มีสิทธิ์ลบถาวร', 'error');
-                return;
-            }
-            const userConfirmed = await showCustomConfirmation('⚠️ ยืนยันการลบข้อความนี้ถาวรจากฐานข้อมูล?');
-            if (!userConfirmed) return;
-
-            try {
-                const docRef = doc(db, getCollectionPath(), messageId);
-                await deleteDoc(docRef); // Requires 'delete' permission
-                displayPopup('ลบข้อความถาวรสำเร็จ!', 'success');
-            } catch (error) {
-                console.error("Error purging message (likely rule violation): ", error);
-                displayPopup('ลบถาวรล้มเหลว: โปรดตรวจสอบ Rules', 'error');
+                console.error("Error deleting message: ", error);
+                displayPopup('ลบไม่สำเร็จ: คุณอาจไม่มีสิทธิ์ลบข้อความนี้', 'error');
             }
         };
 
-        // Listener for NON-DELETED messages (Main Board)
         const setupRealtimeListener = (firestoreDb) => {
             const q = query(
                 collection(firestoreDb, getCollectionPath()),
-                where("isDeleted", "==", false), 
                 orderBy("timestamp", "desc") 
             );
-            // NOTE: This query requires a Composite Index: collectionId=global_messages, fields=[isDeleted (asc), timestamp (desc)]
 
             const messagesContainer = document.getElementById('messages-container');
             const emptyState = document.getElementById('empty-state');
@@ -266,108 +212,42 @@
                 }
 
                 messages.forEach(msg => {
-                    const messageElement = createMessageElement(msg, false);
+                    const messageElement = createMessageElement(msg);
                     messagesContainer.appendChild(messageElement);
                     
-                    const canSoftDelete = msg.userId === currentUserId || isAdmin;
+                    const canDelete = msg.userId === currentUserId || currentUserId === OWNER_UID;
 
-                    if (canSoftDelete) {
+                    if (canDelete) {
                         const deleteButton = messageElement.querySelector(`#delete-btn-${msg.id}`);
                         if (deleteButton) {
-                            deleteButton.addEventListener('click', () => softDeleteMessage(msg.id));
+                            deleteButton.addEventListener('click', () => deleteMessage(msg.id));
                         }
                     }
                 });
             }, (error) => {
-                console.error("Error listening to MAIN messages:", error);
-                const errorDisplay = document.getElementById('error-message');
-                // The error often shows a link to create the required index if one is missing.
-                errorDisplay.textContent = `ข้อผิดพลาดในการโหลดข้อความ (Main Board): ${error.message}. โปรดตรวจสอบว่าได้สร้าง Index ที่จำเป็นแล้ว!`;
-                errorDisplay.classList.remove('hidden');
-            });
-        };
-        
-        // Listener for DELETED messages (Admin Trash Bin)
-        const setupAdminTrashListener = (firestoreDb) => {
-            const q = query(
-                collection(firestoreDb, getCollectionPath()),
-                where("isDeleted", "==", true), // IMPORTANT: Only show deleted messages
-                orderBy("timestamp", "desc") 
-            );
-
-            const trashContainer = document.getElementById('trash-container');
-            const trashEmptyState = document.getElementById('trash-empty-state');
-
-            onSnapshot(q, (snapshot) => {
-                const deletedMessages = [];
-                snapshot.forEach((doc) => {
-                    deletedMessages.push({ id: doc.id, ...doc.data() });
-                });
-
-                trashContainer.innerHTML = ''; 
-                
-                if (deletedMessages.length === 0) {
-                    trashEmptyState.classList.remove('hidden');
-                } else {
-                    trashEmptyState.classList.add('hidden');
-                }
-
-                deletedMessages.forEach(msg => {
-                    const messageElement = createMessageElement(msg, true);
-                    trashContainer.appendChild(messageElement);
-                    
-                    // Attach listeners for restore and purge
-                    const restoreButton = messageElement.querySelector(`#restore-btn-${msg.id}`);
-                    const purgeButton = messageElement.querySelector(`#purge-btn-${msg.id}`);
-
-                    if (restoreButton) {
-                        restoreButton.addEventListener('click', () => restoreMessage(msg.id));
-                    }
-                    if (purgeButton) {
-                        purgeButton.addEventListener('click', () => purgeMessage(msg.id));
-                    }
-                });
-                
-                // Update trash count
-                document.getElementById('trash-count').textContent = deletedMessages.length;
-            }, (error) => {
-                console.error("Error listening to TRASH messages:", error);
-                // Note: Trash listening usually fails if the main query fails due to shared index issue.
+                console.error("Error listening to messages:", error);
+                displayPopup(`เกิดข้อผิดพลาดในการดึงข้อมูล: ${error.message}`, 'error');
             });
         };
 
         /**
          * Creates an HTML element for a single message.
-         * ... (createMessageElement function remains largely the same)
          */
-        const createMessageElement = (msg, isTrashView) => {
+        const createMessageElement = (msg) => {
             const time = msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : 'เมื่อสักครู่';
             
             const isCurrentUser = msg.userId === currentUserId;
-            const canSoftDelete = isCurrentUser || isAdmin; 
+            // Admin can delete, or current user can delete their own
+            const canDelete = isCurrentUser || currentUserId === OWNER_UID; 
             
             const messageCard = document.createElement('div');
-            messageCard.className = `p-4 mb-3 rounded-xl shadow-md transition duration-200 ease-in-out transform hover:scale-[1.01] ${isTrashView ? 'trash-item' : (isCurrentUser ? 'bg-indigo-100 border-indigo-500 border-l-4' : 'bg-white border-gray-200 border-l-4')}`;
+            messageCard.className = `p-4 mb-3 rounded-xl shadow-md transition duration-200 ease-in-out transform hover:scale-[1.01] ${isCurrentUser ? 'bg-indigo-100 border-indigo-500 border-l-4' : 'bg-white border-gray-200 border-l-4'}`;
             
-            let actionButtonsHtml = '';
-            
-            if (isTrashView && isAdmin) {
-                // Admin Trash View actions
-                actionButtonsHtml = `
-                    <button id="restore-btn-${msg.id}" class="text-green-600 hover:text-green-800 transition duration-150 p-1 rounded-full hover:bg-green-100 mr-2" title="กู้คืนข้อความ">
-                        <!-- Restore icon (Rotate) -->
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.76 2.76L3 7"/><path d="M3 3v4h4"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.76-2.76L21 17"/><path d="M21 21v-4h-4"/></svg>
-                    </button>
-                    <button id="purge-btn-${msg.id}" class="text-red-600 hover:text-red-800 transition duration-150 p-1 rounded-full hover:bg-red-200" title="ลบถาวร">
-                        <!-- Purge icon (X) -->
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
-                    </button>
-                `;
-            } else if (!isTrashView && canSoftDelete) {
-                // Main Board actions (Soft Delete)
-                actionButtonsHtml = `
-                    <button id="delete-btn-${msg.id}" class="text-red-500 hover:text-red-700 transition duration-150 p-1 rounded-full hover:bg-red-200" title="ซ่อน/ลบ (Soft Delete)">
-                        <!-- Trash icon (Move to trash) -->
+            let deleteButtonHtml = '';
+            if (canDelete) { // Show button if user is the author OR the admin
+                deleteButtonHtml = `
+                    <button id="delete-btn-${msg.id}" class="text-red-500 hover:text-red-700 transition duration-150 p-1 rounded-full hover:bg-red-200">
+                        <!-- Trash icon -->
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     </button>
                 `;
@@ -376,7 +256,7 @@
             messageCard.innerHTML = `
                 <div class="flex justify-between items-start">
                     <div class="flex flex-col">
-                        <p class="text-lg font-bold ${isTrashView ? 'text-orange-700' : (isCurrentUser ? 'text-indigo-700' : 'text-gray-800')}">
+                        <p class="text-lg font-bold ${isCurrentUser ? 'text-indigo-700' : 'text-gray-800'}">
                             ${sanitizeHtml(msg.nickname)}
                             ${isCurrentUser ? '<span class="text-xs font-normal ml-2 px-2 py-0.5 bg-indigo-500 text-white rounded-full">คุณ</span>' : ''}
                         </p>
@@ -384,29 +264,14 @@
                     </div>
                     <div class="flex items-center space-x-2">
                         <span class="text-xs text-gray-500 mt-1">${time}</span>
-                        ${actionButtonsHtml}
+                        ${deleteButtonHtml}
                     </div>
                 </div>
             `;
             return messageCard;
         };
-        
-        // --- Admin UI Toggle ---
-        let isTrashPanelVisible = false;
-        const toggleTrashPanel = () => {
-            const panel = document.getElementById('admin-trash-panel');
-            isTrashPanelVisible = !isTrashPanelVisible;
-            if (isTrashPanelVisible) {
-                panel.classList.remove('hidden');
-                document.getElementById('trash-toggle-text').textContent = 'ซ่อนถังขยะ Admin';
-            } else {
-                panel.classList.add('hidden');
-                document.getElementById('trash-toggle-text').textContent = 'เปิดถังขยะ Admin';
-            }
-        };
 
-
-        // --- UI Utility Functions (unchanged) ---
+        // --- UI Utility Functions ---
 
         const displayPopup = (message, type) => {
             const popup = document.getElementById('popup-notification');
@@ -460,7 +325,7 @@
                         displayPopup('คัดลอกไม่สำเร็จ ลองกดคัดลอกจาก Console', 'error');
                     });
             } else if (fullId) {
-                // Fallback 
+                // Fallback for environments without navigator.clipboard
                 const el = document.createElement('textarea');
                 el.value = fullId;
                 document.body.appendChild(el);
@@ -492,7 +357,6 @@
             });
 
             document.getElementById('copy-id-button').addEventListener('click', copyFullId);
-            document.getElementById('admin-trash-toggle-button').addEventListener('click', toggleTrashPanel);
         };
     </script>
 </head>
@@ -509,25 +373,6 @@
             </p>
         </header>
 
-        <!-- Admin Trash Panel (Hidden by default, only shown if isAdmin is true) -->
-        <section id="admin-trash-panel" class="mb-8 p-5 bg-orange-50 border-2 border-orange-300 rounded-xl shadow-md hidden">
-            <h2 class="text-xl font-semibold text-orange-800 mb-3 flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M3 6h18"/><path d="M10 11v6m4-6v6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                ถังขยะข้อความ Admin (<span id="trash-count">0</span> รายการ)
-            </h2>
-            <p class="text-sm text-orange-700 mb-4">
-                นี่คือรายการข้อความที่ถูกซ่อน (Soft Deleted) คุณสามารถ **กู้คืน** กลับสู่กระดานหลัก หรือ **ลบถาวร** ได้
-            </p>
-            
-            <div id="trash-container" class="max-h-60 overflow-y-auto pr-2 border-t pt-2">
-                <!-- Deleted messages will be injected here -->
-            </div>
-            
-            <div id="trash-empty-state" class="text-center p-4 text-gray-500 mt-2 text-sm">
-                ถังขยะว่างเปล่า 🎉
-            </div>
-        </section>
-        
         <!-- Input Section -->
         <section class="mb-8 p-5 bg-indigo-50 rounded-xl shadow-inner">
             <h2 class="text-xl font-semibold text-indigo-700 mb-3">โพสต์ข้อความใหม่</h2>
@@ -592,14 +437,6 @@
         <footer class="mt-8 pt-4 border-t text-center text-xs text-gray-400">
             <p id="user-id-display" class="mb-2">กำลังเชื่อมต่อ...</p>
             
-            <div id="admin-features-toggle" class="hidden">
-                <button id="admin-trash-toggle-button" class="flex items-center space-x-1 px-3 py-1 mb-2 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-200 transition duration-150">
-                    <!-- Trash icon -->
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                    <span id="trash-toggle-text">เปิดถังขยะ Admin</span>
-                </button>
-            </div>
-
             <div class="flex flex-col items-center space-y-2">
                 <span id="full-user-id" class="hidden text-[10px] text-gray-300"></span> 
 
@@ -623,18 +460,17 @@
     <div id="confirm-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 z-[60] flex justify-center items-center hidden">
         <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
             <p id="confirm-message" class="text-lg font-semibold mb-6 text-gray-800">
-                คุณแน่ใจหรือไม่ว่าต้องการดำเนินการนี้?
+                คุณแน่ใจหรือไม่ว่าต้องการลบข้อความนี้?
             </p>
             <div class="flex justify-end space-x-3">
                 <button id="confirm-no" class="py-2 px-4 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition duration-150">
                     ยกเลิก
                 </button>
                 <button id="confirm-yes" class="py-2 px-4 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition duration-150">
-                    ยืนยัน
+                    ยืนยันการลบ
                 </button>
             </div>
         </div>
     </div>
 </body>
 </html>
-
