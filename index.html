@@ -21,6 +21,14 @@
             background: #a0aec0;
             border-radius: 3px;
         }
+        /* Admin message specific styling */
+        .admin-message {
+            background-color: #fef3c7; /* Light yellow/gold background */
+            border-color: #fbbf24; /* Amber border */
+        }
+        .admin-text {
+            color: #d97706; /* Darker gold text */
+        }
     </style>
     <!-- Firebase Imports -->
     <script type="module">
@@ -39,12 +47,14 @@
             orderBy, 
             Timestamp,
             doc,
-            deleteDoc
+            deleteDoc,
+            setLogLevel 
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================================
         // *** 1. การตั้งค่า Firebase ของคุณ (Config) ***
         // =================================================================================
+        // ข้อมูลนี้ควรตรงกับการตั้งค่าโปรเจกต์ Firebase ของคุณ
         const FIREBASE_CONFIG = {
             apiKey: "AIzaSyDMFnadRdI2hQTqOKOC-3cZcNCN4K0TAYQ",
             authDomain: "global-61284.firebaseapp.com",
@@ -67,31 +77,29 @@
         let auth;
         let currentUserId = null;
         let isAuthReady = false;
+        let isAdmin = false; 
         
         // --- Core Application Logic ---
 
         const initializeFirebase = async () => {
+             // setLogLevel('Debug'); // เปิดใช้งานเพื่อดู log การทำงานของ Firebase
+             
             try {
                 const app = initializeApp(FIREBASE_CONFIG);
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                // Sign in anonymously
+                // Sign in anonymously for all users
                 await signInAnonymously(auth);
 
                 onAuthStateChanged(auth, (user) => {
                     isAuthReady = true;
                     if (user) {
                         currentUserId = user.uid;
-                        const isAdmin = currentUserId === OWNER_UID;
+                        isAdmin = currentUserId === OWNER_UID; 
                         
-                        // Log full ID for manual copy if needed (in case the current one expires)
-                        console.log("=========================================");
-                        console.log("รหัสผู้ใช้ปัจจุบัน (Current UID):");
-                        console.log(currentUserId);
-                        console.log("รหัส ADMIN ที่ถูกกำหนด (Defined ADMIN UID):");
-                        console.log(OWNER_UID);
-                        console.log("=========================================");
+                        console.log(`สถานะ Admin: ${isAdmin ? 'เป็น ADMIN' : 'ผู้ใช้ทั่วไป'}`);
+                        console.log(`รหัสผู้ใช้ปัจจุบัน: ${currentUserId}`);
 
                         document.getElementById('user-id-display').textContent = 
                             `รหัสผู้ใช้: ${currentUserId.substring(0, 8)}... ${isAdmin ? '(ADMIN)' : ''}`;
@@ -100,21 +108,24 @@
                         
                         setupRealtimeListener(db);
                     } else {
-                        currentUserId = crypto.randomUUID(); 
-                        document.getElementById('user-id-display').textContent = 'Error: Not signed in';
+                        // Fallback if sign-in fails, though onAuthStateChanged should capture the anonymous user
+                        currentUserId = 'anonymous-' + crypto.randomUUID(); 
+                        document.getElementById('user-id-display').textContent = 'กำลังเชื่อมต่อแบบไม่ระบุตัวตน...';
+                        setupRealtimeListener(db); 
                     }
                 });
 
             } catch (error) {
                 console.error("Firebase initialization or authentication failed:", error);
                 const errorDisplay = document.getElementById('error-message');
-                errorDisplay.textContent = `เกิดข้อผิดพลาดในการเชื่อมต่อ: ${error.message} (โปรดตรวจสอบ FIREBASE_CONFIG และ Security Rules)`;
+                errorDisplay.textContent = `เกิดข้อผิดพลาดในการเชื่อมต่อ: ${error.message} (โปรดตรวจสอบ FIREBASE_CONFIG และ Rules)`;
                 errorDisplay.classList.remove('hidden');
             }
         };
 
         const sanitizeHtml = (str) => {
             if (typeof str !== 'string') return '';
+            // Prevent XSS attacks by converting HTML special characters
             return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
         };
 
@@ -132,15 +143,8 @@
             const nickname = sanitizeHtml(nicknameInput.value.trim());
             const message = sanitizeHtml(messageInput.value.trim());
 
-            if (nickname.length === 0) {
-                displayPopup('กรุณาใส่ชื่อเล่นของคุณก่อน', 'error');
-                nicknameInput.focus();
-                return;
-            }
-
-            if (message.length === 0) {
-                displayPopup('กรุณาพิมพ์ข้อความที่คุณต้องการส่ง', 'error');
-                messageInput.focus();
+            if (nickname.length === 0 || message.length === 0) {
+                displayPopup('กรุณากรอกข้อมูลให้ครบถ้วน', 'error');
                 return;
             }
 
@@ -149,6 +153,7 @@
             sendButton.textContent = 'กำลังส่ง...';
 
             try {
+                // Add the message document
                 await addDoc(collection(db, getCollectionPath()), {
                     nickname: nickname,
                     message: message,
@@ -168,26 +173,29 @@
             }
         };
 
-        const deleteMessage = async (messageId) => {
+        // Hard Delete: Permanently deletes the message
+        const deleteMessagePermanently = async (messageId) => {
             if (!db || !currentUserId) {
                 displayPopup('ระบบยังไม่พร้อมใช้งาน', 'error');
                 return;
             }
 
-            const userConfirmed = await showCustomConfirmation('คุณแน่ใจหรือไม่ว่าต้องการลบข้อความนี้?');
+            const userConfirmed = await showCustomConfirmation('คุณแน่ใจหรือไม่ว่าต้องการลบข้อความนี้ **ถาวร**?');
             if (!userConfirmed) return;
 
             try {
                 const docRef = doc(db, getCollectionPath(), messageId);
                 await deleteDoc(docRef);
-                displayPopup('ลบข้อความสำเร็จ!', 'success');
+                displayPopup('ลบข้อความถาวรสำเร็จ!', 'success');
             } catch (error) {
                 console.error("Error deleting message: ", error);
-                displayPopup('ลบไม่สำเร็จ: คุณอาจไม่มีสิทธิ์ลบข้อความนี้', 'error');
+                displayPopup('การล้มล้มเหลว: คุณอาจไม่มีสิทธิ์ (Allowed: Owner/Admin/Author)', 'error');
             }
         };
 
+        // Listener for all messages
         const setupRealtimeListener = (firestoreDb) => {
+            // Simple query: order by timestamp descending
             const q = query(
                 collection(firestoreDb, getCollectionPath()),
                 orderBy("timestamp", "desc") 
@@ -195,6 +203,8 @@
 
             const messagesContainer = document.getElementById('messages-container');
             const emptyState = document.getElementById('empty-state');
+            const errorDisplay = document.getElementById('error-message');
+            errorDisplay.classList.add('hidden'); // Clear previous errors
 
             onSnapshot(q, (snapshot) => {
                 const messages = [];
@@ -206,7 +216,6 @@
                 
                 if (messages.length === 0) {
                     emptyState.classList.remove('hidden');
-                    return;
                 } else {
                     emptyState.classList.add('hidden');
                 }
@@ -215,50 +224,70 @@
                     const messageElement = createMessageElement(msg);
                     messagesContainer.appendChild(messageElement);
                     
-                    const canDelete = msg.userId === currentUserId || currentUserId === OWNER_UID;
+                    const canDelete = msg.userId === currentUserId || isAdmin;
 
                     if (canDelete) {
                         const deleteButton = messageElement.querySelector(`#delete-btn-${msg.id}`);
                         if (deleteButton) {
-                            deleteButton.addEventListener('click', () => deleteMessage(msg.id));
+                            deleteButton.addEventListener('click', () => deleteMessagePermanently(msg.id));
                         }
                     }
                 });
             }, (error) => {
+                // This block handles permission errors or network issues during data fetching
                 console.error("Error listening to messages:", error);
-                displayPopup(`เกิดข้อผิดพลาดในการดึงข้อมูล: ${error.message}`, 'error');
+                errorDisplay.textContent = `ข้อผิดพลาดในการโหลดข้อความ (Main Board): ${error.message}. (โปรดตรวจสอบ Security Rules)`;
+                errorDisplay.classList.remove('hidden');
+                messagesContainer.innerHTML = ''; 
+                emptyState.classList.add('hidden');
             });
         };
-
-        /**
-         * Creates an HTML element for a single message.
-         */
+        
         const createMessageElement = (msg) => {
             const time = msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : 'เมื่อสักครู่';
             
             const isCurrentUser = msg.userId === currentUserId;
-            // Admin can delete, or current user can delete their own
-            const canDelete = isCurrentUser || currentUserId === OWNER_UID; 
+            const isMessageAdmin = msg.userId === OWNER_UID; // Check if the message was posted by the defined ADMIN UID
+            const canDelete = isCurrentUser || isAdmin; 
             
+            // Determine CSS classes based on user type
+            let cardClass = 'bg-white border-gray-200 border-l-4';
+            let nameClass = 'text-gray-800';
+            
+            if (isMessageAdmin) {
+                // Highlight for Admin messages
+                cardClass = 'admin-message border-l-4 border-yellow-600';
+                nameClass = 'admin-text';
+            } else if (isCurrentUser) {
+                // Highlight for the current user (if not Admin)
+                cardClass = 'bg-indigo-100 border-indigo-500 border-l-4';
+                nameClass = 'text-indigo-700';
+            }
+
             const messageCard = document.createElement('div');
-            messageCard.className = `p-4 mb-3 rounded-xl shadow-md transition duration-200 ease-in-out transform hover:scale-[1.01] ${isCurrentUser ? 'bg-indigo-100 border-indigo-500 border-l-4' : 'bg-white border-gray-200 border-l-4'}`;
+            messageCard.className = `p-4 mb-3 rounded-xl shadow-md transition duration-200 ease-in-out transform hover:scale-[1.01] ${cardClass}`;
             
             let deleteButtonHtml = '';
-            if (canDelete) { // Show button if user is the author OR the admin
+            
+            if (canDelete) {
                 deleteButtonHtml = `
-                    <button id="delete-btn-${msg.id}" class="text-red-500 hover:text-red-700 transition duration-150 p-1 rounded-full hover:bg-red-200">
-                        <!-- Trash icon -->
+                    <button id="delete-btn-${msg.id}" class="text-red-500 hover:text-red-700 transition duration-150 p-1 rounded-full hover:bg-red-200" title="ลบถาวร">
+                        <!-- Trash icon (Permanent Delete) -->
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     </button>
                 `;
             }
+            
+            // Add Crown symbol for Admin messages
+            const adminSymbol = isMessageAdmin ? '<span class="mr-2" title="ผู้ดูแลระบบ">👑</span>' : '';
+            const userTag = isCurrentUser && !isMessageAdmin ? '<span class="text-xs font-normal ml-2 px-2 py-0.5 bg-indigo-500 text-white rounded-full">คุณ</span>' : '';
+
 
             messageCard.innerHTML = `
                 <div class="flex justify-between items-start">
                     <div class="flex flex-col">
-                        <p class="text-lg font-bold ${isCurrentUser ? 'text-indigo-700' : 'text-gray-800'}">
-                            ${sanitizeHtml(msg.nickname)}
-                            ${isCurrentUser ? '<span class="text-xs font-normal ml-2 px-2 py-0.5 bg-indigo-500 text-white rounded-full">คุณ</span>' : ''}
+                        <p class="text-lg font-bold ${nameClass} flex items-center">
+                            ${adminSymbol}${sanitizeHtml(msg.nickname)}${userTag}
                         </p>
                         <p class="text-sm mt-1 text-gray-600 break-words">${sanitizeHtml(msg.message)}</p>
                     </div>
@@ -270,8 +299,8 @@
             `;
             return messageCard;
         };
-
-        // --- UI Utility Functions ---
+        
+        // --- UI Utility Functions (unchanged) ---
 
         const displayPopup = (message, type) => {
             const popup = document.getElementById('popup-notification');
@@ -325,7 +354,7 @@
                         displayPopup('คัดลอกไม่สำเร็จ ลองกดคัดลอกจาก Console', 'error');
                     });
             } else if (fullId) {
-                // Fallback for environments without navigator.clipboard
+                // Fallback 
                 const el = document.createElement('textarea');
                 el.value = fullId;
                 document.body.appendChild(el);
@@ -366,7 +395,7 @@
         <!-- Header -->
         <header class="mb-6 border-b pb-4">
             <h1 class="text-3xl font-extrabold text-gray-900 mb-1">
-                กระดานข้อความเรียลไทม์ (Global Leaderboard)
+                กระดานข้อความเรียลไทม์ (โหมดเสถียร)
             </h1>
             <p class="text-gray-500">
                 พิมพ์ชื่อเล่นและข้อความของคุณ ข้อความจะปรากฏให้ทุกคนเห็นทันที!
@@ -425,7 +454,7 @@
             </div>
             
             <!-- Empty State -->
-            <div id="empty-state" class="text-center p-8 text-gray-500 bg-gray-50 rounded-xl mt-4">
+            <div id="empty-state" class="text-center p-8 text-gray-500 bg-gray-50 rounded-xl mt-4 hidden">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                 </svg>
@@ -460,17 +489,18 @@
     <div id="confirm-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 z-[60] flex justify-center items-center hidden">
         <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
             <p id="confirm-message" class="text-lg font-semibold mb-6 text-gray-800">
-                คุณแน่ใจหรือไม่ว่าต้องการลบข้อความนี้?
+                คุณแน่ใจหรือไม่ว่าต้องการดำเนินการนี้?
             </p>
             <div class="flex justify-end space-x-3">
                 <button id="confirm-no" class="py-2 px-4 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition duration-150">
                     ยกเลิก
                 </button>
                 <button id="confirm-yes" class="py-2 px-4 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition duration-150">
-                    ยืนยันการลบ
+                    ยืนยัน
                 </button>
             </div>
         </div>
     </div>
 </body>
 </html>
+
