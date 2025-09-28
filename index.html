@@ -33,12 +33,14 @@
             onSnapshot, 
             query, 
             orderBy, 
-            Timestamp 
+            Timestamp,
+            doc,
+            deleteDoc // *** IMPORTED for Deletion ***
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        // import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"; // สามารถเปิดใช้งานเพื่อดีบั๊กได้
+        // import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================================
-        // *** 1. การตั้งค่า Firebase ของคุณ (ถูกวางค่าจากผู้ใช้แล้ว) ***
+        // *** 1. การตั้งค่า Firebase ของคุณ (นำมาจากข้อมูลผู้ใช้) ***
         // =================================================================================
         const FIREBASE_CONFIG = {
             apiKey: "AIzaSyDMFnadRdI2hQTqOKOC-3cZcNCN4K0TAYQ",
@@ -49,7 +51,6 @@
             appId: "1:435556329017:web:6bb964b4931cc987ec8fe8"
         };
         
-        // ใช้ Project ID เป็นตัวระบุแอปพลิเคชันสำหรับ Firestore Path
         const appId = FIREBASE_CONFIG.projectId || 'default-app-id'; 
         
         // Application State
@@ -57,31 +58,25 @@
         let auth;
         let currentUserId = null;
         let isAuthReady = false;
-
+        
         // --- Core Application Logic ---
 
-        /**
-         * Initializes Firebase and authenticates the user.
-         */
         const initializeFirebase = async () => {
             try {
                 const app = initializeApp(FIREBASE_CONFIG);
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                // 1. Authenticate the user (ลงชื่อเข้าใช้แบบ Anonymous)
                 await signInAnonymously(auth);
 
-                // 2. Setup Auth State Listener
                 onAuthStateChanged(auth, (user) => {
                     isAuthReady = true;
                     if (user) {
                         currentUserId = user.uid;
-                        // แสดง User ID แบบย่อ (สำคัญสำหรับ Multi-User App)
                         document.getElementById('user-id-display').textContent = `รหัสผู้ใช้: ${currentUserId.substring(0, 8)}...`;
                         setupRealtimeListener(db);
                     } else {
-                        currentUserId = crypto.randomUUID(); // Fallback
+                        currentUserId = crypto.randomUUID(); 
                         document.getElementById('user-id-display').textContent = 'Error: Not signed in';
                     }
                 });
@@ -94,17 +89,13 @@
             }
         };
 
-        /**
-         * Cleans up string input to prevent XSS.
-         */
         const sanitizeHtml = (str) => {
             if (typeof str !== 'string') return '';
             return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
         };
 
-        /**
-         * Sends the user's message to the Firestore database.
-         */
+        const getCollectionPath = () => `artifacts/${appId}/public/data/global_messages`;
+
         const sendMessage = async () => {
             if (!db || !currentUserId || !isAuthReady) {
                 displayPopup('ระบบยังไม่พร้อมใช้งาน กรุณารอสักครู่', 'error');
@@ -134,23 +125,19 @@
             sendButton.textContent = 'กำลังส่ง...';
 
             try {
-                // Path สำหรับข้อมูลสาธารณะทั่วโลก: /artifacts/{appId}/public/data/global_messages
-                const collectionPath = `artifacts/${appId}/public/data/global_messages`;
-                
-                await addDoc(collection(db, collectionPath), {
+                await addDoc(collection(db, getCollectionPath()), {
                     nickname: nickname,
                     message: message,
                     userId: currentUserId,
                     timestamp: Timestamp.now(), 
                 });
 
-                // Clear the message input only, keep nickname for convenience
                 messageInput.value = '';
                 displayPopup('ส่งข้อความแล้ว!', 'success');
 
             } catch (error) {
                 console.error("Error sending message: ", error);
-                displayPopup('ส่งข้อความไม่สำเร็จ: โปรดตรวจสอบ Firestore Security Rules ของคุณ', 'error');
+                displayPopup('ส่งข้อความไม่สำเร็จ: โปรดตรวจสอบ Firestore Security Rules', 'error');
             } finally {
                 sendButton.disabled = false;
                 sendButton.textContent = 'ส่งข้อความ';
@@ -158,13 +145,34 @@
         };
 
         /**
-         * Sets up a real-time listener for messages and updates the UI.
+         * *** NEW FUNCTION ***
+         * Deletes a message from Firestore by ID.
+         * @param {string} messageId The ID of the document to delete.
          */
+        const deleteMessage = async (messageId) => {
+            if (!db || !currentUserId) {
+                displayPopup('ระบบยังไม่พร้อมใช้งาน', 'error');
+                return;
+            }
+
+            // Custom "Confirm" box replacement
+            const userConfirmed = await showCustomConfirmation('คุณแน่ใจหรือไม่ว่าต้องการลบข้อความนี้?');
+            if (!userConfirmed) return;
+
+            try {
+                const docRef = doc(db, getCollectionPath(), messageId);
+                await deleteDoc(docRef);
+                displayPopup('ลบข้อความของคุณแล้ว!', 'success');
+            } catch (error) {
+                console.error("Error deleting message: ", error);
+                displayPopup('ลบไม่สำเร็จ: คุณอาจไม่มีสิทธิ์ลบข้อความนี้', 'error');
+            }
+        };
+
         const setupRealtimeListener = (firestoreDb) => {
-            const collectionPath = `artifacts/${appId}/public/data/global_messages`;
             const q = query(
-                collection(firestoreDb, collectionPath),
-                orderBy("timestamp", "desc") // Sort by newest message first
+                collection(firestoreDb, getCollectionPath()),
+                orderBy("timestamp", "desc") 
             );
 
             const messagesContainer = document.getElementById('messages-container');
@@ -176,7 +184,7 @@
                     messages.push({ id: doc.id, ...doc.data() });
                 });
 
-                messagesContainer.innerHTML = ''; // Clear existing messages
+                messagesContainer.innerHTML = ''; 
                 
                 if (messages.length === 0) {
                     emptyState.classList.remove('hidden');
@@ -188,6 +196,13 @@
                 messages.forEach(msg => {
                     const messageElement = createMessageElement(msg);
                     messagesContainer.appendChild(messageElement);
+                    // Attach event listener after adding to DOM
+                    if (msg.userId === currentUserId) {
+                        const deleteButton = messageElement.querySelector(`#delete-btn-${msg.id}`);
+                        if (deleteButton) {
+                            deleteButton.addEventListener('click', () => deleteMessage(msg.id));
+                        }
+                    }
                 });
             }, (error) => {
                 console.error("Error listening to messages:", error);
@@ -206,15 +221,30 @@
             const messageCard = document.createElement('div');
             messageCard.className = `p-4 mb-3 rounded-xl shadow-md transition duration-200 ease-in-out transform hover:scale-[1.01] ${isCurrentUser ? 'bg-indigo-100 border-indigo-500 border-l-4' : 'bg-white border-gray-200 border-l-4'}`;
             
+            let deleteButtonHtml = '';
+            if (isCurrentUser) {
+                deleteButtonHtml = `
+                    <button id="delete-btn-${msg.id}" class="text-red-500 hover:text-red-700 transition duration-150 p-1 rounded-full hover:bg-red-200">
+                        <!-- Trash icon (Lucide equivalent) -->
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                    </button>
+                `;
+            }
+
             messageCard.innerHTML = `
                 <div class="flex justify-between items-start">
-                    <p class="text-lg font-bold ${isCurrentUser ? 'text-indigo-700' : 'text-gray-800'}">
-                        ${sanitizeHtml(msg.nickname)}
-                        ${isCurrentUser ? '<span class="text-xs font-normal ml-2 px-2 py-0.5 bg-indigo-500 text-white rounded-full">คุณ</span>' : ''}
-                    </p>
-                    <span class="text-xs text-gray-500 mt-1">${time}</span>
+                    <div class="flex flex-col">
+                        <p class="text-lg font-bold ${isCurrentUser ? 'text-indigo-700' : 'text-gray-800'}">
+                            ${sanitizeHtml(msg.nickname)}
+                            ${isCurrentUser ? '<span class="text-xs font-normal ml-2 px-2 py-0.5 bg-indigo-500 text-white rounded-full">คุณ</span>' : ''}
+                        </p>
+                        <p class="text-sm mt-1 text-gray-600 break-words">${sanitizeHtml(msg.message)}</p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <span class="text-xs text-gray-500 mt-1">${time}</span>
+                        ${deleteButtonHtml}
+                    </div>
                 </div>
-                <p class="text-sm mt-1 text-gray-600 break-words">${sanitizeHtml(msg.message)}</p>
             `;
             return messageCard;
         };
@@ -228,19 +258,45 @@
             const popup = document.getElementById('popup-notification');
             const color = type === 'success' ? 'bg-green-500' : 'bg-red-500';
             popup.textContent = message;
-            // Reset class for re-displaying
+            
             popup.className = `fixed bottom-4 right-4 p-3 rounded-lg shadow-xl text-white z-50 transition-transform duration-300 transform translate-y-20 opacity-0 ${color}`;
             
-            // Show the popup
             setTimeout(() => {
                 popup.classList.remove('translate-y-20', 'opacity-0');
                 popup.classList.add('translate-y-0', 'opacity-100');
             }, 50);
 
-            // Hide the popup
             setTimeout(() => {
                 popup.classList.add('translate-y-20', 'opacity-0');
             }, 3000); 
+        };
+
+        /**
+         * Replaces window.confirm() with a custom modal for better UI.
+         */
+        const showCustomConfirmation = (message) => {
+            return new Promise(resolve => {
+                const modal = document.getElementById('confirm-modal');
+                document.getElementById('confirm-message').textContent = message;
+                modal.classList.remove('hidden');
+
+                const handleConfirm = () => {
+                    modal.classList.add('hidden');
+                    document.getElementById('confirm-yes').removeEventListener('click', handleConfirm);
+                    document.getElementById('confirm-no').removeEventListener('click', handleCancel);
+                    resolve(true);
+                };
+
+                const handleCancel = () => {
+                    modal.classList.add('hidden');
+                    document.getElementById('confirm-yes').removeEventListener('click', handleConfirm);
+                    document.getElementById('confirm-no').removeEventListener('click', handleCancel);
+                    resolve(false);
+                };
+
+                document.getElementById('confirm-yes').addEventListener('click', handleConfirm);
+                document.getElementById('confirm-no').addEventListener('click', handleCancel);
+            });
         };
 
 
@@ -249,13 +305,11 @@
         window.onload = () => {
             initializeFirebase();
 
-            // Setup button click handler
             document.getElementById('send-button').addEventListener('click', (e) => {
                 e.preventDefault();
                 sendMessage();
             });
 
-            // Allow Enter key to submit message from the message input
             document.getElementById('message-input').addEventListener('keypress', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -348,6 +402,23 @@
     <!-- Popup Notification -->
     <div id="popup-notification" class="fixed bottom-4 right-4 p-3 rounded-lg shadow-xl text-white z-50 transition-transform duration-300 transform translate-y-20 opacity-0">
         <!-- Notification message will appear here -->
+    </div>
+    
+    <!-- Custom Confirmation Modal (Replaces window.confirm) -->
+    <div id="confirm-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 z-[60] flex justify-center items-center hidden">
+        <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
+            <p id="confirm-message" class="text-lg font-semibold mb-6 text-gray-800">
+                คุณแน่ใจหรือไม่ว่าต้องการลบข้อความนี้?
+            </p>
+            <div class="flex justify-end space-x-3">
+                <button id="confirm-no" class="py-2 px-4 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition duration-150">
+                    ยกเลิก
+                </button>
+                <button id="confirm-yes" class="py-2 px-4 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition duration-150">
+                    ยืนยันการลบ
+                </button>
+            </div>
+        </div>
     </div>
 </body>
 </html>
