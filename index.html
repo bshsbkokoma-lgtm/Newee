@@ -29,6 +29,11 @@
         .admin-text {
             color: #d97706; /* Darker gold text */
         }
+        /* Style for the message card to allow smooth drag/swipe */
+        .message-card {
+            touch-action: pan-y; /* Allows horizontal swipe without scrolling vertically */
+            cursor: pointer;
+        }
     </style>
     <!-- Firebase Imports -->
     <script type="module">
@@ -60,7 +65,6 @@
             authDomain: "global-61284.firebaseapp.com",
             projectId: "global-61284",
             storageBucket: "global-61284.firebasestorage.app",
-            messagingSenderId: "435556329017",
             appId: "1:435556329017:web:6bb964b4931cc987ec8fe8"
         };
         
@@ -79,6 +83,10 @@
         let isAuthReady = false;
         let isAdmin = false; 
         
+        // New: Reply State
+        let replyingTo = null; // { id, nickname, message, userId }
+        const SWIPE_THRESHOLD = -50; // Threshold to register a swipe left
+        
         // --- Core Application Logic ---
 
         const initializeFirebase = async () => {
@@ -89,7 +97,6 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                // Sign in anonymously for all users
                 await signInAnonymously(auth);
 
                 onAuthStateChanged(auth, (user) => {
@@ -98,9 +105,6 @@
                         currentUserId = user.uid;
                         isAdmin = currentUserId === OWNER_UID; 
                         
-                        console.log(`สถานะ Admin: ${isAdmin ? 'เป็น ADMIN' : 'ผู้ใช้ทั่วไป'}`);
-                        console.log(`รหัสผู้ใช้ปัจจุบัน: ${currentUserId}`);
-
                         document.getElementById('user-id-display').textContent = 
                             `รหัสผู้ใช้: ${currentUserId.substring(0, 8)}... ${isAdmin ? '(ADMIN)' : ''}`;
                         
@@ -108,7 +112,6 @@
                         
                         setupRealtimeListener(db);
                     } else {
-                        // Fallback if sign-in fails, though onAuthStateChanged should capture the anonymous user
                         currentUserId = 'anonymous-' + crypto.randomUUID(); 
                         document.getElementById('user-id-display').textContent = 'กำลังเชื่อมต่อแบบไม่ระบุตัวตน...';
                         setupRealtimeListener(db); 
@@ -130,6 +133,39 @@
         };
 
         const getCollectionPath = () => `artifacts/${appId}/public/data/global_messages`;
+
+        // New: Reply function setup
+        const startReply = (msg) => {
+            replyingTo = {
+                id: msg.id,
+                nickname: msg.nickname,
+                message: msg.message,
+                userId: msg.userId
+            };
+            updateReplyBoxUI();
+        };
+
+        const cancelReply = () => {
+            replyingTo = null;
+            updateReplyBoxUI();
+        };
+        
+        const updateReplyBoxUI = () => {
+            const replyBox = document.getElementById('reply-box');
+            if (replyingTo) {
+                replyBox.classList.remove('hidden');
+                document.getElementById('reply-nickname').textContent = sanitizeHtml(replyingTo.nickname);
+                // Truncate message for display
+                const replyText = replyingTo.message.length > 50 
+                    ? replyingTo.message.substring(0, 47) + '...' 
+                    : replyingTo.message;
+                document.getElementById('reply-text').textContent = sanitizeHtml(replyText);
+                document.getElementById('message-input').focus();
+            } else {
+                replyBox.classList.add('hidden');
+            }
+        };
+
 
         const sendMessage = async () => {
             if (!db || !currentUserId || !isAuthReady) {
@@ -153,15 +189,27 @@
             sendButton.textContent = 'กำลังส่ง...';
 
             try {
-                // Add the message document
-                await addDoc(collection(db, getCollectionPath()), {
+                const messageData = {
                     nickname: nickname,
                     message: message,
                     userId: currentUserId,
                     timestamp: Timestamp.now(), 
-                });
+                };
+                
+                // Add reply metadata if available
+                if (replyingTo) {
+                    messageData.replyTo = {
+                        id: replyingTo.id,
+                        nickname: replyingTo.nickname,
+                        message: replyingTo.message.substring(0, 100), // Store max 100 chars of original
+                        userId: replyingTo.userId
+                    };
+                }
+
+                await addDoc(collection(db, getCollectionPath()), messageData);
 
                 messageInput.value = '';
+                cancelReply(); // Reset reply state after sending
                 displayPopup('ส่งข้อความแล้ว!', 'success');
 
             } catch (error) {
@@ -173,7 +221,6 @@
             }
         };
 
-        // Hard Delete: Permanently deletes the message
         const deleteMessagePermanently = async (messageId) => {
             if (!db || !currentUserId) {
                 displayPopup('ระบบยังไม่พร้อมใช้งาน', 'error');
@@ -193,9 +240,7 @@
             }
         };
 
-        // Listener for all messages
         const setupRealtimeListener = (firestoreDb) => {
-            // Simple query: order by timestamp descending
             const q = query(
                 collection(firestoreDb, getCollectionPath()),
                 orderBy("timestamp", "desc") 
@@ -204,7 +249,7 @@
             const messagesContainer = document.getElementById('messages-container');
             const emptyState = document.getElementById('empty-state');
             const errorDisplay = document.getElementById('error-message');
-            errorDisplay.classList.add('hidden'); // Clear previous errors
+            errorDisplay.classList.add('hidden'); 
 
             onSnapshot(q, (snapshot) => {
                 const messages = [];
@@ -234,9 +279,8 @@
                     }
                 });
             }, (error) => {
-                // This block handles permission errors or network issues during data fetching
                 console.error("Error listening to messages:", error);
-                errorDisplay.textContent = `ข้อผิดพลาดในการโหลดข้อความ (Main Board): ${error.message}. (โปรดตรวจสอบ Security Rules)`;
+                errorDisplay.textContent = `ข้อผิดพลาดในการโหลดข้อความ: ${error.message}. (โปรดตรวจสอบ Security Rules)`;
                 errorDisplay.classList.remove('hidden');
                 messagesContainer.innerHTML = ''; 
                 emptyState.classList.add('hidden');
@@ -247,7 +291,7 @@
             const time = msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : 'เมื่อสักครู่';
             
             const isCurrentUser = msg.userId === currentUserId;
-            const isMessageAdmin = msg.userId === OWNER_UID; // Check if the message was posted by the defined ADMIN UID
+            const isMessageAdmin = msg.userId === OWNER_UID; 
             const canDelete = isCurrentUser || isAdmin; 
             
             // Determine CSS classes based on user type
@@ -255,52 +299,116 @@
             let nameClass = 'text-gray-800';
             
             if (isMessageAdmin) {
-                // Highlight for Admin messages
                 cardClass = 'admin-message border-l-4 border-yellow-600';
                 nameClass = 'admin-text';
             } else if (isCurrentUser) {
-                // Highlight for the current user (if not Admin)
                 cardClass = 'bg-indigo-100 border-indigo-500 border-l-4';
                 nameClass = 'text-indigo-700';
             }
 
             const messageCard = document.createElement('div');
-            messageCard.className = `p-4 mb-3 rounded-xl shadow-md transition duration-200 ease-in-out transform hover:scale-[1.01] ${cardClass}`;
+            messageCard.className = `message-card p-4 mb-3 rounded-xl shadow-md transition duration-200 ease-in-out transform hover:scale-[1.01] ${cardClass}`;
+            messageCard.id = `msg-${msg.id}`; // Set ID for swipe targeting
             
             let deleteButtonHtml = '';
             
             if (canDelete) {
                 deleteButtonHtml = `
                     <button id="delete-btn-${msg.id}" class="text-red-500 hover:text-red-700 transition duration-150 p-1 rounded-full hover:bg-red-200" title="ลบถาวร">
-                        <!-- Trash icon (Permanent Delete) -->
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     </button>
                 `;
             }
             
-            // Add Crown symbol for Admin messages
+            // New: Reply Quote Rendering
+            let replyQuoteHtml = '';
+            if (msg.replyTo && msg.replyTo.nickname && msg.replyTo.message) {
+                replyQuoteHtml = `
+                    <div class="border-l-2 pl-3 py-1 mb-2 border-gray-300 bg-gray-50 rounded-md text-ellipsis overflow-hidden whitespace-nowrap">
+                        <p class="text-xs font-semibold text-gray-500">ตอบกลับ: ${sanitizeHtml(msg.replyTo.nickname)}</p>
+                        <p class="text-xs text-gray-400">${sanitizeHtml(msg.replyTo.message)}</p>
+                    </div>
+                `;
+            }
+
             const adminSymbol = isMessageAdmin ? '<span class="mr-2" title="ผู้ดูแลระบบ">👑</span>' : '';
             const userTag = isCurrentUser && !isMessageAdmin ? '<span class="text-xs font-normal ml-2 px-2 py-0.5 bg-indigo-500 text-white rounded-full">คุณ</span>' : '';
 
 
             messageCard.innerHTML = `
                 <div class="flex justify-between items-start">
-                    <div class="flex flex-col">
+                    <div class="flex flex-col w-full">
+                        ${replyQuoteHtml}
                         <p class="text-lg font-bold ${nameClass} flex items-center">
                             ${adminSymbol}${sanitizeHtml(msg.nickname)}${userTag}
                         </p>
                         <p class="text-sm mt-1 text-gray-600 break-words">${sanitizeHtml(msg.message)}</p>
                     </div>
-                    <div class="flex items-center space-x-2">
+                    <div class="flex items-center space-x-2 flex-shrink-0">
                         <span class="text-xs text-gray-500 mt-1">${time}</span>
                         ${deleteButtonHtml}
                     </div>
                 </div>
             `;
+            
+            // --- Swipe/Drag Logic ---
+            let dragStartX = 0;
+
+            const handleDragStart = (e) => {
+                // Determine start position from touch or mouse event
+                dragStartX = e.type.startsWith('touch') ? e.touches[0].clientX : e.clientX;
+                messageCard.style.transition = 'none'; // Disable transition during drag
+                if (e.type.startsWith('mouse')) {
+                    // Set up event listeners for mouse drag
+                    document.addEventListener('mousemove', handleDragMove);
+                    document.addEventListener('mouseup', handleDragEnd, { once: true });
+                }
+            };
+
+            const handleDragMove = (e) => {
+                if (dragStartX === 0) return;
+                const currentX = e.type.startsWith('touch') ? e.touches[0].clientX : e.clientX;
+                const dragDistance = currentX - dragStartX;
+
+                // Only allow movement to the left (negative distance)
+                if (dragDistance < 0 && dragDistance > -100) { 
+                    messageCard.style.transform = `translateX(${dragDistance}px) scale(1.01)`;
+                } else if (dragDistance > 0) {
+                     // Prevent moving right
+                     messageCard.style.transform = `translateX(0px) scale(1.01)`;
+                }
+            };
+
+            const handleDragEnd = (e) => {
+                // If this is a touch event, get position from changedTouches
+                const isTouch = e.type.startsWith('touch');
+                const endX = isTouch ? e.changedTouches[0].clientX : e.clientX;
+                const dragDistance = endX - dragStartX;
+
+                messageCard.style.transition = 'transform 0.3s ease'; // Re-enable transition
+                messageCard.style.transform = ''; // Reset position
+                
+                if (dragDistance < SWIPE_THRESHOLD) {
+                    startReply(msg); 
+                }
+
+                dragStartX = 0;
+                 if (!isTouch) {
+                    document.removeEventListener('mousemove', handleDragMove);
+                }
+            };
+
+            messageCard.addEventListener('touchstart', handleDragStart, { passive: true });
+            messageCard.addEventListener('touchmove', handleDragMove, { passive: true });
+            messageCard.addEventListener('touchend', handleDragEnd);
+
+            messageCard.addEventListener('mousedown', handleDragStart);
+            // Mousemove/Mouseup listeners are attached/removed inside handleDragStart/handleDragEnd for mouse events
+
             return messageCard;
         };
         
-        // --- UI Utility Functions (unchanged) ---
+        // --- UI Utility Functions ---
 
         const displayPopup = (message, type) => {
             const popup = document.getElementById('popup-notification');
@@ -386,6 +494,7 @@
             });
 
             document.getElementById('copy-id-button').addEventListener('click', copyFullId);
+            document.getElementById('cancel-reply-button').addEventListener('click', cancelReply);
         };
     </script>
 </head>
@@ -395,16 +504,30 @@
         <!-- Header -->
         <header class="mb-6 border-b pb-4">
             <h1 class="text-3xl font-extrabold text-gray-900 mb-1">
-                กระดานข้อความเรียลไทม์ (โหมดเสถียร)
+                กระดานข้อความเรียลไทม์ (โหมด Swipe-to-Reply)
             </h1>
             <p class="text-gray-500">
-                พิมพ์ชื่อเล่นและข้อความของคุณ ข้อความจะปรากฏให้ทุกคนเห็นทันที!
+                **ปัดข้อความไปทางซ้าย** เพื่อตอบกลับ!
             </p>
         </header>
 
         <!-- Input Section -->
         <section class="mb-8 p-5 bg-indigo-50 rounded-xl shadow-inner">
             <h2 class="text-xl font-semibold text-indigo-700 mb-3">โพสต์ข้อความใหม่</h2>
+            
+            <!-- NEW: Reply Box UI -->
+            <div id="reply-box" class="p-3 mb-4 bg-indigo-100 border-l-4 border-indigo-500 rounded-lg shadow-md hidden">
+                <div class="flex justify-between items-start">
+                    <div class="flex-grow min-w-0">
+                        <p class="text-sm font-bold text-indigo-700 truncate">ตอบกลับ: <span id="reply-nickname"></span></p>
+                        <p class="text-xs text-indigo-500 truncate" id="reply-text"></p>
+                    </div>
+                    <button id="cancel-reply-button" class="flex-shrink-0 ml-3 text-indigo-500 hover:text-indigo-700" title="ยกเลิกการตอบกลับ">
+                        <!-- Close icon -->
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                    </button>
+                </div>
+            </div>
             
             <!-- Nickname Input -->
             <div class="mb-4">
