@@ -60,7 +60,7 @@
             orderBy, 
             Timestamp,
             doc,
-            getDoc, // เพิ่ม getDoc สำหรับการดึงข้อมูลก่อนลบ
+            getDoc, 
             deleteDoc,
             updateDoc,
             setLogLevel 
@@ -104,6 +104,9 @@
         
         // New Constant: ขีดจำกัดจำนวนอักษร
         const MESSAGE_CHAR_LIMIT = 200;
+        
+        // NEW: Timeout ID for notifications (ใช้เพื่อควบคุมการซ่อนป๊อปอัป)
+        let popupTimeoutId = null;
 
         // --- Core Application Logic ---
         
@@ -712,6 +715,12 @@
          */
         const displayPopup = (message, type) => {
             const popup = document.getElementById('popup-notification');
+            
+            // 1. ยกเลิกการซ่อนป๊อปอัปที่อาจถูกตั้งเวลาไว้ก่อนหน้า เพื่อให้ป๊อปอัปใหม่แสดงผลได้เต็มเวลา
+            if (popupTimeoutId) {
+                clearTimeout(popupTimeoutId);
+            }
+            
             let color = 'bg-gray-700';
             if (type === 'success') {
                 color = 'bg-green-500';
@@ -723,16 +732,21 @@
             
             popup.textContent = message;
             
-            popup.className = `fixed bottom-4 right-4 p-3 rounded-lg shadow-xl text-white z-50 transition-transform duration-300 transform translate-y-20 opacity-0 ${color}`;
+            // กำหนด CSS ให้มีการเปลี่ยนสี/ขนาดและอยู่ในตำแหน่งเริ่มต้น (ซ่อนอยู่ด้านล่าง)
+            popup.className = `fixed bottom-4 right-4 p-3 rounded-lg shadow-xl text-white z-50 transition-transform duration-300 ${color}`;
             
+            // 2. แสดงป๊อปอัป (เลื่อนขึ้นและปรากฏ)
             setTimeout(() => {
                 popup.classList.remove('translate-y-20', 'opacity-0');
                 popup.classList.add('translate-y-0', 'opacity-100');
             }, 50);
 
-            setTimeout(() => {
+            // 3. ตั้งเวลาซ่อนป๊อปอัปหลังจาก 4 วินาที
+            popupTimeoutId = setTimeout(() => {
+                popup.classList.remove('translate-y-0', 'opacity-100'); // ซ่อน
                 popup.classList.add('translate-y-20', 'opacity-0');
-            }, 5000); // แสดงนานขึ้นเป็น 5 วินาทีสำหรับการแจ้งเตือนทั่วโลก
+                popupTimeoutId = null; // เคลียร์ ID หลังจากทำงานเสร็จ
+            }, 4000); // แสดงนาน 4 วินาที
         };
 
         const showCustomConfirmation = (message) => {
