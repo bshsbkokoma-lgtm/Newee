@@ -60,6 +60,7 @@
             orderBy, 
             Timestamp,
             doc,
+            getDoc, // เพิ่ม getDoc สำหรับการดึงข้อมูลก่อนลบ
             deleteDoc,
             updateDoc,
             setLogLevel 
@@ -74,7 +75,7 @@
             authDomain: "global-61284.firebaseapp.com",
             projectId: "global-61284",
             storageBucket: "global-61284.firebasestorage.app",
-            appId: "1:435556329017:web:6bb964b4931cc987ec8fe8"
+            appId: "1:435556329017:web:6bb964b4931cc997ec8fe8"
         };
         
         // =================================================================================
@@ -100,6 +101,9 @@
         
         // New State: สำหรับการแก้ไข
         let editingMessageId = null; // ID ของข้อความที่กำลังแก้ไข
+        
+        // New Constant: ขีดจำกัดจำนวนอักษร
+        const MESSAGE_CHAR_LIMIT = 200;
 
         // --- Core Application Logic ---
         
@@ -173,10 +177,12 @@
                         document.getElementById('full-user-id').textContent = currentUserId;
                         
                         setupRealtimeListener(db);
+                        setupNotificationListener(db); // ตั้งค่า Listener สำหรับแจ้งเตือนการลบ
                     } else {
                         currentUserId = 'anonymous-' + crypto.randomUUID(); 
                         document.getElementById('user-id-display').textContent = 'กำลังเชื่อมต่อแบบไม่ระบุตัวตน...';
                         setupRealtimeListener(db); 
+                        setupNotificationListener(db); // ตั้งค่า Listener สำหรับแจ้งเตือนการลบ
                     }
                 });
 
@@ -195,8 +201,9 @@
         };
 
         const getCollectionPath = () => `artifacts/${appId}/public/data/global_messages`;
+        const getNotificationPath = () => `artifacts/${appId}/public/data/global_notifications`; 
 
-        // NEW: UI Update for Send/Edit Button
+        // UI Update for Send/Edit Button
         const updateSendButtonUI = (isEditing) => {
             const sendButton = document.getElementById('send-button');
             const cancelButton = document.getElementById('cancel-edit-button');
@@ -231,6 +238,7 @@
             document.getElementById('message-input').focus();
             updateSendButtonUI(true); // True for editing mode
             cancelReply(); // ยกเลิกโหมดตอบกลับเมื่อเข้าโหมดแก้ไข
+            updateCharCount(msg.message.length); // อัปเดตตัวนับอักษร
         };
 
         const cancelEdit = () => {
@@ -238,6 +246,7 @@
             document.getElementById('message-input').value = '';
             // Nickname ไม่ต้องรีเซ็ต
             updateSendButtonUI(false); // False for new message mode
+            updateCharCount(0); // รีเซ็ตตัวนับอักษร
         };
         
         // New: Reply function setup
@@ -273,6 +282,23 @@
             }
         };
 
+        // *** NEW: Character Counter Logic ***
+        const updateCharCount = (currentLength) => {
+            const counterElement = document.getElementById('char-count');
+            const remaining = MESSAGE_CHAR_LIMIT - currentLength;
+            
+            let colorClass = 'text-gray-500'; // Default gray
+            if (remaining <= 20) {
+                colorClass = 'text-red-600 font-bold'; // Red when critical
+            } else if (remaining <= 50) {
+                colorClass = 'text-orange-500'; // Orange when getting low
+            }
+
+            counterElement.className = `text-xs mt-1 transition-colors duration-200 ${colorClass}`;
+            counterElement.textContent = `${currentLength}/${MESSAGE_CHAR_LIMIT} ตัวอักษร`;
+        };
+        // *** END NEW: Character Counter Logic ***
+
 
         const sendMessage = async () => {
             if (!db || !currentUserId || !isAuthReady) {
@@ -290,6 +316,13 @@
                 displayPopup('กรุณากรอกข้อมูลให้ครบถ้วน', 'error');
                 return;
             }
+            
+            // Check max length based on the attribute (should be controlled by browser but as a final safety check)
+             if (message.length > MESSAGE_CHAR_LIMIT) {
+                displayPopup(`ข้อความยาวเกิน ${MESSAGE_CHAR_LIMIT} ตัวอักษร`, 'error');
+                return;
+            }
+
 
             const sendButton = document.getElementById('send-button');
             const isEditing = !!editingMessageId;
@@ -339,6 +372,7 @@
 
                 messageInput.value = ''; // เคลียร์เฉพาะช่องข้อความ
                 // nicknameInput.value = nickname; // เก็บ nickname ล่าสุดไว้
+                updateCharCount(0); // รีเซ็ตตัวนับอักษรหลังจากส่ง
                 
             } catch (error) {
                 console.error("Error processing message: ", error);
@@ -349,22 +383,70 @@
             }
         };
 
+        /**
+         * ลบข้อความถาวร และแจ้งเตือนทุกคนหากผู้ลบเป็น Admin/Owner
+         */
         const deleteMessagePermanently = async (messageId) => {
             if (!db || !currentUserId) {
                 displayPopup('ระบบยังไม่พร้อมใช้งาน', 'error');
                 return;
             }
 
-            const userConfirmed = await showCustomConfirmation('คุณแน่ใจหรือไม่ว่าต้องการลบข้อความนี้ **ถาวร**?');
+            const docRef = doc(db, getCollectionPath(), messageId);
+            let messageToDeleteData;
+
+            try {
+                // 1. Fetch message data before deletion
+                const docSnap = await getDoc(docRef);
+                if (!docSnap.exists()) {
+                    displayPopup('ข้อความนี้ถูกลบไปแล้ว', 'error');
+                    return;
+                }
+                messageToDeleteData = docSnap.data();
+            } catch (error) {
+                 console.error("Error fetching message before deletion: ", error);
+                 displayPopup('เกิดข้อผิดพลาดในการดึงข้อมูลข้อความ', 'error');
+                 return;
+            }
+            
+            // Check if the current user is authorized to delete (Admin or Author)
+            const isAuthor = messageToDeleteData.userId === currentUserId;
+            if (!isAdmin && !isAuthor) {
+                 displayPopup('คุณไม่มีสิทธิ์ลบข้อความนี้', 'error');
+                 return;
+            }
+
+            const userConfirmed = await showCustomConfirmation('คุณแน่ใจหรือไม่ว่าต้องการลบข้อความนี้ **ถาวร**? การลบจะแจ้งเตือนให้ทุกคนทราบ');
             if (!userConfirmed) return;
 
             try {
-                const docRef = doc(db, getCollectionPath(), messageId);
+                // 2. Delete the message document
                 await deleteDoc(docRef);
-                displayPopup('ลบข้อความถาวรสำเร็จ!', 'success');
+
+                // 3. Create a global notification log (Only if deleted by an Admin)
+                if (isAdmin) {
+                     // ใช้ nickname จากช่อง input เป็นชื่อ Admin ที่ลบ
+                     const adminNickname = sanitizeHtml(document.getElementById('nickname-input').value.trim() || 'ผู้ดูแลระบบ');
+                     const deletedNickname = messageToDeleteData.nickname;
+                     // ข้อความย่อไม่เกิน 50 ตัวอักษร
+                     const deletedSnippet = messageToDeleteData.message.substring(0, 50) + (messageToDeleteData.message.length > 50 ? '...' : '');
+
+                     await addDoc(collection(db, getNotificationPath()), {
+                         type: 'message_deleted',
+                         adminId: currentUserId,
+                         adminNickname: adminNickname,
+                         deletedNickname: deletedNickname,
+                         deletedSnippet: deletedSnippet,
+                         timestamp: Timestamp.now(),
+                     });
+                     displayPopup('ลบข้อความถาวรสำเร็จและส่งการแจ้งเตือนแล้ว!', 'success');
+                } else {
+                     displayPopup('ลบข้อความถาวรสำเร็จ!', 'success');
+                }
+
             } catch (error) {
-                console.error("Error deleting message: ", error);
-                displayPopup('การล้มล้มเหลว: คุณอาจไม่มีสิทธิ์ (Allowed: Owner/Admin/Author)', 'error');
+                console.error("Error deleting or notifying:", error);
+                displayPopup('การล้มล้มเหลว: โปรดตรวจสอบ Firestore Rules', 'error');
             }
         };
 
@@ -423,6 +505,44 @@
             });
         };
         
+        /**
+         * ตั้งค่า Listener สำหรับแจ้งเตือนการลบข้อความทั่วโลก
+         */
+        const setupNotificationListener = (firestoreDb) => {
+            const q = query(
+                collection(firestoreDb, getNotificationPath()),
+                orderBy("timestamp", "desc") 
+            );
+
+            // ใช้เวลานี้เพื่อกรองไม่ให้แสดงแจ้งเตือนเก่าที่เกิดขึ้นก่อนที่เราจะโหลดหน้า
+            const listenerStartTime = Date.now(); 
+
+            onSnapshot(q, (snapshot) => {
+                snapshot.docChanges().forEach((change) => {
+                    // เราสนใจเฉพาะข้อความแจ้งเตือนที่เพิ่งถูก 'added' เท่านั้น
+                    if (change.type === "added") {
+                        const notification = change.doc.data();
+                        
+                        // ตรวจสอบว่าแจ้งเตือนถูกสร้างขึ้นในช่วงเวลาที่โหลดหน้ามาไม่นานนี้
+                        const notificationTime = notification.timestamp.toMillis();
+                        if (notificationTime > listenerStartTime - 5000) { // 5000ms buffer for sync
+                            const adminName = sanitizeHtml(notification.adminNickname || 'ผู้ดูแลระบบ');
+                            const deletedName = sanitizeHtml(notification.deletedNickname);
+                            const deletedSnippet = sanitizeHtml(notification.deletedSnippet);
+                            
+                            const message = `📢 แชทถูกลบโดย ${adminName}! ข้อความของ ${deletedName}: "${deletedSnippet}"...`;
+                            
+                            // ส่งการแจ้งเตือนไปยัง UI (ใช้ type: 'warning' เพื่อให้เป็นสีส้ม)
+                            displayPopup(message, 'warning'); 
+                        }
+                    }
+                });
+            }, (error) => {
+                console.error("Error listening to notifications:", error);
+                // ไม่ต้องแสดง error บน UI หลัก เพราะเป็นแค่ส่วนแจ้งเตือนเสริม
+            });
+        };
+
         const createMessageElement = (msg) => {
             // ใช้ฟังก์ชันใหม่ในการแสดงผลเวลาที่ละเอียดขึ้น
             const displayTime = formatRelativeTime(msg.timestamp);
@@ -469,7 +589,7 @@
             if (canDelete) {
                 deleteButtonHtml = `
                     <button id="delete-btn-${msg.id}" class="text-red-500 hover:text-red-700 transition duration-150 p-1 rounded-full hover:bg-red-200" title="ลบถาวร">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                        <svg xmlns="http://www.w3.org/2300/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     </button>
                 `;
             }
@@ -585,9 +705,22 @@
         
         // --- UI Utility Functions ---
 
+        /**
+         * แสดงป๊อปอัปแจ้งเตือน
+         * @param {string} message - ข้อความที่จะแสดง
+         * @param {'success'|'error'|'warning'} type - ชนิดของการแจ้งเตือน (กำหนดสี)
+         */
         const displayPopup = (message, type) => {
             const popup = document.getElementById('popup-notification');
-            const color = type === 'success' ? 'bg-green-500' : 'bg-red-500';
+            let color = 'bg-gray-700';
+            if (type === 'success') {
+                color = 'bg-green-500';
+            } else if (type === 'error') {
+                color = 'bg-red-500';
+            } else if (type === 'warning') { // สีส้มสำหรับการแจ้งเตือนการลบ
+                 color = 'bg-orange-500'; 
+            }
+            
             popup.textContent = message;
             
             popup.className = `fixed bottom-4 right-4 p-3 rounded-lg shadow-xl text-white z-50 transition-transform duration-300 transform translate-y-20 opacity-0 ${color}`;
@@ -599,7 +732,7 @@
 
             setTimeout(() => {
                 popup.classList.add('translate-y-20', 'opacity-0');
-            }, 3000); 
+            }, 5000); // แสดงนานขึ้นเป็น 5 วินาทีสำหรับการแจ้งเตือนทั่วโลก
         };
 
         const showCustomConfirmation = (message) => {
@@ -655,6 +788,9 @@
 
         window.onload = () => {
             initializeFirebase();
+            
+            // Initial call to set the counter to 0 on load
+            updateCharCount(0); 
 
             document.getElementById('send-button').addEventListener('click', (e) => {
                 e.preventDefault();
@@ -667,10 +803,16 @@
                     sendMessage();
                 }
             });
+            
+            // *** NEW: Add input listener for character counting ***
+            document.getElementById('message-input').addEventListener('input', (e) => {
+                updateCharCount(e.target.value.length);
+            });
+            // *** END NEW ***
 
             document.getElementById('copy-id-button').addEventListener('click', copyFullId);
             document.getElementById('cancel-reply-button').addEventListener('click', cancelReply);
-            document.getElementById('cancel-edit-button').addEventListener('click', cancelEdit); // NEW: ปุ่มยกเลิกการแก้ไข
+            document.getElementById('cancel-edit-button').addEventListener('click', cancelEdit); 
         };
     </script>
 </head>
@@ -692,7 +834,7 @@ By พี่มิวฉิค
         <section class="mb-8 p-5 bg-indigo-50 rounded-xl shadow-inner">
             <h2 class="text-xl font-semibold text-indigo-700 mb-3">โพสต์ข้อความใหม่</h2>
             
-            <!-- NEW: Reply Box UI -->
+            <!-- Reply Box UI -->
             <div id="reply-box" class="p-3 mb-4 bg-indigo-100 border-l-4 border-indigo-500 rounded-lg shadow-md hidden">
                 <div class="flex justify-between items-start">
                     <div class="flex-grow min-w-0">
@@ -728,7 +870,9 @@ By พี่มิวฉิค
                     rows="3"
                     class="w-full p-3 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 resize-none"
                 ></textarea>
-                <p class="text-xs text-gray-500 mt-1">สูงสุด 200 ตัวอักษร</p>
+                <!-- *** NEW: Character Count Display *** -->
+                <p id="char-count" class="text-xs mt-1 text-gray-500">0/200 ตัวอักษร</p>
+                <!-- *** END NEW *** -->
             </div>
 
             <!-- Submit Button & Cancel Edit Container -->
