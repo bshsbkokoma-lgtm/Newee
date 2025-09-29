@@ -61,7 +61,7 @@
             Timestamp,
             doc,
             deleteDoc,
-            updateDoc, // เพิ่ม updateDoc สำหรับการแก้ไข
+            updateDoc,
             setLogLevel 
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
@@ -83,7 +83,7 @@
         // รหัสเจ้าของหลัก
         const OWNER_UID = "GzGmKIGZSSNpfoiZkj656n7kUPr2"; 
         // รหัสผู้ใช้ของแฟนคุณ (Secondary Admin/Partner UID)
-        const PARTNER_UID = "B9XJAC2wpPdT0gYa4xjNsNwv22M2"; 
+        const PARTNER_UID = "FIRXq3vgAShznQZi5D7BXBQAUYm1"; 
 
         const appId = FIREBASE_CONFIG.projectId || 'default-app-id'; 
         
@@ -453,18 +453,26 @@
 
 
             messageCard.innerHTML = `
-                <div class="flex justify-between items-start">
-                    <div class="flex flex-col w-full">
+                <div class="flex justify-between items-start w-full">
+                    <!-- 1. Message Content (Flexible Area) -->
+                    <!-- min-w-0 flex-grow ทำให้เนื้อหาสามารถย่อได้เพื่อหลีกทางให้ปุ่มควบคุม -->
+                    <div class="flex flex-col min-w-0 flex-grow pr-2">
                         ${replyQuoteHtml}
-                        <p class="text-lg font-bold ${nameClass} flex items-center">
+                        <p class="text-lg font-bold ${nameClass} flex items-center min-w-0 truncate">
                             ${adminSymbol}${sanitizeHtml(msg.nickname)}${userTag}${editedTag}
                         </p>
+                        <!-- break-words ช่วยให้ข้อความยาว ๆ ตัดคำได้ -->
                         <p class="text-sm mt-1 text-gray-600 break-words">${sanitizeHtml(msg.message)}</p>
                     </div>
-                    <div class="flex items-center space-x-1 flex-shrink-0">
-                        ${editButtonHtml}
-                        <span class="text-xs text-gray-500 mt-1">${time}</span>
-                        ${deleteButtonHtml}
+                    
+                    <!-- 2. Controls & Time (Fixed Area - Stacked Vertically) -->
+                    <!-- flex-shrink-0 ทำให้ส่วนนี้ไม่โดนบีบ -->
+                    <div class="flex flex-col items-end space-y-1 flex-shrink-0 ml-1 mt-1"> 
+                        <div class="flex items-center space-x-1">
+                            ${editButtonHtml}
+                            ${deleteButtonHtml}
+                        </div>
+                        <span class="text-xs text-gray-500">${time}</span>
                     </div>
                 </div>
             `;
