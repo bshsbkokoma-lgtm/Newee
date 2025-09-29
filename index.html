@@ -21,13 +21,21 @@
             background: #a0aec0;
             border-radius: 3px;
         }
-        /* Admin message specific styling */
+        /* Admin message specific styling (Owner - Gold/Crown) */
         .admin-message {
             background-color: #fef3c7; /* Light yellow/gold background */
             border-color: #fbbf24; /* Amber border */
         }
         .admin-text {
             color: #d97706; /* Darker gold text */
+        }
+        /* NEW: Partner/Fan message specific styling (Pink/Heart) */
+        .partner-message {
+            background-color: #fce7f3; /* Light Pink */
+            border-color: #db2777; /* Deep Pink Border */
+        }
+        .partner-text {
+            color: #9d174d; /* Darker Pink Text */
         }
         /* Style for the message card to allow smooth drag/swipe */
         .message-card {
@@ -69,10 +77,12 @@
         };
         
         // =================================================================================
-        // *** 2. รหัสเจ้าของเว็บไซต์ (ADMIN UID) ***
-        // *** รหัสที่คัดลอกมา: GzGmKIGZSSNpfoiZkj656n7kUPr2 ***
+        // *** 2. รหัสผู้ดูแลระบบ (ADMIN UID) ***
         // =================================================================================
+        // รหัสเจ้าของหลัก
         const OWNER_UID = "GzGmKIGZSSNpfoiZkj656n7kUPr2"; 
+        // NEW: รหัสผู้ใช้ของแฟนคุณ (Secondary Admin/Partner UID) - กรุณาใส่รหัสจริงแทนที่ข้อความนี้
+        const PARTNER_UID = "PLEASE_INSERT_PARTNER_UID_HERE"; 
 
         const appId = FIREBASE_CONFIG.projectId || 'default-app-id'; 
         
@@ -103,7 +113,8 @@
                     isAuthReady = true;
                     if (user) {
                         currentUserId = user.uid;
-                        isAdmin = currentUserId === OWNER_UID; 
+                        // isAdmin จะเป็น true ถ้าเป็น OWNER_UID หรือ PARTNER_UID เพื่อให้ทั้งคู่มีสิทธิ์ลบข้อความ
+                        isAdmin = currentUserId === OWNER_UID || currentUserId === PARTNER_UID; 
                         
                         document.getElementById('user-id-display').textContent = 
                             `รหัสผู้ใช้: ${currentUserId.substring(0, 8)}... ${isAdmin ? '(ADMIN)' : ''}`;
@@ -292,16 +303,23 @@
             
             const isCurrentUser = msg.userId === currentUserId;
             const isMessageAdmin = msg.userId === OWNER_UID; 
-            const canDelete = isCurrentUser || isAdmin; 
+            const isPartnerMessage = msg.userId === PARTNER_UID; // ตรวจสอบว่าเป็นรหัสแฟนหรือไม่
+            const canDelete = isCurrentUser || isAdmin; // ทั้ง Owner และ Partner สามารถลบได้
             
             // Determine CSS classes based on user type
             let cardClass = 'bg-white border-gray-200 border-l-4';
             let nameClass = 'text-gray-800';
             
             if (isMessageAdmin) {
+                // สไตล์สำหรับเจ้าของ (มงกุฎทอง)
                 cardClass = 'admin-message border-l-4 border-yellow-600';
                 nameClass = 'admin-text';
+            } else if (isPartnerMessage) {
+                // สไตล์สำหรับแฟน (หัวใจชมพู)
+                cardClass = 'partner-message border-l-4 border-pink-600';
+                nameClass = 'partner-text';
             } else if (isCurrentUser) {
+                // สไตล์สำหรับผู้ใช้ปัจจุบันทั่วไป
                 cardClass = 'bg-indigo-100 border-indigo-500 border-l-4';
                 nameClass = 'text-indigo-700';
             }
@@ -331,8 +349,14 @@
                 `;
             }
 
-            const adminSymbol = isMessageAdmin ? '<span class="mr-2" title="ผู้ดูแลระบบ">👑</span>' : '';
-            const userTag = isCurrentUser && !isMessageAdmin ? '<span class="text-xs font-normal ml-2 px-2 py-0.5 bg-indigo-500 text-white rounded-full">คุณ</span>' : '';
+            // กำหนดสัญลักษณ์: 👑 สำหรับเจ้าของ, 💖 สำหรับแฟน, ไม่มีสำหรับคนอื่น
+            const adminSymbol = isMessageAdmin ? 
+                '<span class="mr-2" title="ผู้ดูแลระบบ">👑</span>' : 
+                isPartnerMessage ? '<span class="mr-2" title="แฟน">💖</span>' : '';
+                
+            // แสดง "คุณ" ถ้าเป็นผู้ใช้ปัจจุบันและไม่ใช่เจ้าของ/แฟน (เพราะมีสัญลักษณ์แสดงสถานะแล้ว)
+            const userTag = isCurrentUser && !isMessageAdmin && !isPartnerMessage ? 
+                '<span class="text-xs font-normal ml-2 px-2 py-0.5 bg-indigo-500 text-white rounded-full">คุณ</span>' : '';
 
 
             messageCard.innerHTML = `
@@ -627,3 +651,4 @@ By พี่มิวฉิค
     </div>
 </body>
 </html>
+
