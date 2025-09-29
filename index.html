@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>กระดานข้อความเรียลไทม์ทั่วโลก</title>
+    <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use Inter Font -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
         body {
@@ -27,7 +29,7 @@
         .admin-text {
             color: #d97706; /* Darker gold text */
         }
-        /* NEW: Partner/Fan message specific styling (Pink/Heart) */
+        /* Partner/Fan message specific styling (Pink/Heart) */
         .partner-message {
             background-color: #fce7f3; /* Light Pink */
             border-color: #db2777; /* Deep Pink Border */
@@ -41,6 +43,7 @@
             cursor: pointer;
         }
     </style>
+    <!-- Firebase Imports -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { 
@@ -58,6 +61,7 @@
             Timestamp,
             doc,
             deleteDoc,
+            updateDoc, // เพิ่ม updateDoc สำหรับการแก้ไข
             setLogLevel 
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
@@ -78,8 +82,8 @@
         // =================================================================================
         // รหัสเจ้าของหลัก
         const OWNER_UID = "GzGmKIGZSSNpfoiZkj656n7kUPr2"; 
-        // NEW: รหัสผู้ใช้ของแฟนคุณ (Secondary Admin/Partner UID) - ถูกแก้ไขแล้ว
-        const PARTNER_UID = "g3vuHEudh5c1w4DCJG7mbRCMUC02"; 
+        // รหัสผู้ใช้ของแฟนคุณ (Secondary Admin/Partner UID)
+        const PARTNER_UID = "FIRXq3vgAShznQZi5D7BXBQAUYm1"; 
 
         const appId = FIREBASE_CONFIG.projectId || 'default-app-id'; 
         
@@ -90,10 +94,13 @@
         let isAuthReady = false;
         let isAdmin = false; 
         
-        // New: Reply State
+        // New State: สำหรับการตอบกลับ
         let replyingTo = null; // { id, nickname, message, userId }
         const SWIPE_THRESHOLD = -50; // Threshold to register a swipe left
         
+        // New State: สำหรับการแก้ไข
+        let editingMessageId = null; // ID ของข้อความที่กำลังแก้ไข
+
         // --- Core Application Logic ---
 
         const initializeFirebase = async () => {
@@ -142,6 +149,50 @@
 
         const getCollectionPath = () => `artifacts/${appId}/public/data/global_messages`;
 
+        // NEW: UI Update for Send/Edit Button
+        const updateSendButtonUI = (isEditing) => {
+            const sendButton = document.getElementById('send-button');
+            const cancelButton = document.getElementById('cancel-edit-button');
+            const sendButtonContainer = document.getElementById('send-button-container');
+            
+            if (isEditing) {
+                sendButton.textContent = 'บันทึกการแก้ไข';
+                // เปลี่ยนสีเป็นสีเขียวสำหรับการแก้ไข
+                sendButton.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                sendButton.classList.add('bg-green-600', 'hover:bg-green-700');
+                
+                sendButtonContainer.classList.add('flex', 'space-x-3');
+                sendButtonContainer.classList.remove('block');
+                cancelButton.classList.remove('hidden');
+            } else {
+                sendButton.textContent = 'ส่งข้อความ';
+                // เปลี่ยนสีเป็นสีน้ำเงินสำหรับการส่งใหม่
+                sendButton.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+                sendButton.classList.remove('bg-green-600', 'hover:bg-green-700');
+                
+                sendButtonContainer.classList.add('block');
+                sendButtonContainer.classList.remove('flex', 'space-x-3');
+                cancelButton.classList.add('hidden');
+            }
+        }
+        
+        // New: Edit function setup
+        const startEdit = (msg) => {
+            editingMessageId = msg.id;
+            document.getElementById('nickname-input').value = msg.nickname;
+            document.getElementById('message-input').value = msg.message;
+            document.getElementById('message-input').focus();
+            updateSendButtonUI(true); // True for editing mode
+            cancelReply(); // ยกเลิกโหมดตอบกลับเมื่อเข้าโหมดแก้ไข
+        };
+
+        const cancelEdit = () => {
+            editingMessageId = null;
+            document.getElementById('message-input').value = '';
+            // Nickname ไม่ต้องรีเซ็ต
+            updateSendButtonUI(false); // False for new message mode
+        };
+        
         // New: Reply function setup
         const startReply = (msg) => {
             replyingTo = {
@@ -151,6 +202,7 @@
                 userId: msg.userId
             };
             updateReplyBoxUI();
+            cancelEdit(); // ยกเลิกโหมดแก้ไขเมื่อเข้าโหมดตอบกลับ
         };
 
         const cancelReply = () => {
@@ -193,39 +245,60 @@
             }
 
             const sendButton = document.getElementById('send-button');
+            const isEditing = !!editingMessageId;
+
             sendButton.disabled = true;
-            sendButton.textContent = 'กำลังส่ง...';
+            sendButton.textContent = isEditing ? 'กำลังบันทึก...' : 'กำลังส่ง...';
 
             try {
                 const messageData = {
                     nickname: nickname,
                     message: message,
-                    userId: currentUserId,
-                    timestamp: Timestamp.now(), 
                 };
                 
-                // Add reply metadata if available
-                if (replyingTo) {
-                    messageData.replyTo = {
-                        id: replyingTo.id,
-                        nickname: replyingTo.nickname,
-                        message: replyingTo.message.substring(0, 100), // Store max 100 chars of original
-                        userId: replyingTo.userId
+                if (isEditing) {
+                    // *** OPERATION: UPDATE ***
+                    const docRef = doc(db, getCollectionPath(), editingMessageId);
+                    await updateDoc(docRef, {
+                        ...messageData,
+                        updatedAt: Timestamp.now() // เพิ่ม Timestamp สำหรับการแก้ไข
+                    }); 
+                    cancelEdit();
+                    displayPopup('แก้ไขข้อความสำเร็จ!', 'success');
+
+                } else {
+                    // *** OPERATION: CREATE ***
+                    const createData = {
+                        ...messageData,
+                        userId: currentUserId,
+                        timestamp: Timestamp.now(), 
                     };
+
+                    // Add reply metadata if available
+                    if (replyingTo) {
+                        createData.replyTo = {
+                            id: replyingTo.id,
+                            nickname: replyingTo.nickname,
+                            message: replyingTo.message.substring(0, 100), // Store max 100 chars of original
+                            userId: replyingTo.userId
+                        };
+                    }
+
+                    await addDoc(collection(db, getCollectionPath()), createData);
+
+                    cancelReply(); // Reset reply state after sending
+                    displayPopup('ส่งข้อความแล้ว!', 'success');
                 }
 
-                await addDoc(collection(db, getCollectionPath()), messageData);
-
-                messageInput.value = '';
-                cancelReply(); // Reset reply state after sending
-                displayPopup('ส่งข้อความแล้ว!', 'success');
-
+                messageInput.value = ''; // เคลียร์เฉพาะช่องข้อความ
+                // nicknameInput.value = nickname; // เก็บ nickname ล่าสุดไว้
+                
             } catch (error) {
-                console.error("Error sending message: ", error);
-                displayPopup('ส่งข้อความไม่สำเร็จ: โปรดตรวจสอบ Firestore Security Rules', 'error');
+                console.error("Error processing message: ", error);
+                displayPopup(`ดำเนินการไม่สำเร็จ: ${error.message} (โปรดตรวจสอบ Firestore Rules)`, 'error');
             } finally {
                 sendButton.disabled = false;
-                sendButton.textContent = 'ส่งข้อความ';
+                updateSendButtonUI(!!editingMessageId); // Restore button state based on editing state
             }
         };
 
@@ -278,11 +351,19 @@
                     messagesContainer.appendChild(messageElement);
                     
                     const canDelete = msg.userId === currentUserId || isAdmin;
-
+                    const canEdit = msg.userId === currentUserId; // แก้ไขได้เฉพาะข้อความของตนเอง
+                    
+                    // Add event listeners for Delete and Edit
                     if (canDelete) {
                         const deleteButton = messageElement.querySelector(`#delete-btn-${msg.id}`);
                         if (deleteButton) {
                             deleteButton.addEventListener('click', () => deleteMessagePermanently(msg.id));
+                        }
+                    }
+                    if (canEdit) {
+                        const editButton = messageElement.querySelector(`#edit-btn-${msg.id}`);
+                        if (editButton) {
+                            editButton.addEventListener('click', () => startEdit(msg));
                         }
                     }
                 });
@@ -300,8 +381,9 @@
             
             const isCurrentUser = msg.userId === currentUserId;
             const isMessageAdmin = msg.userId === OWNER_UID; 
-            const isPartnerMessage = msg.userId === PARTNER_UID; // ตรวจสอบว่าเป็นรหัสแฟนหรือไม่
-            const canDelete = isCurrentUser || isAdmin; // ทั้ง Owner และ Partner สามารถลบได้
+            const isPartnerMessage = msg.userId === PARTNER_UID; 
+            const canDelete = isCurrentUser || isAdmin; 
+            const canEdit = isCurrentUser; // ผู้ใช้ปัจจุบันสามารถแก้ไขได้
             
             // Determine CSS classes based on user type
             let cardClass = 'bg-white border-gray-200 border-l-4';
@@ -326,7 +408,16 @@
             messageCard.id = `msg-${msg.id}`; // Set ID for swipe targeting
             
             let deleteButtonHtml = '';
+            let editButtonHtml = '';
             
+            if (canEdit) {
+                 editButtonHtml = `
+                    <button id="edit-btn-${msg.id}" class="text-indigo-500 hover:text-indigo-700 transition duration-150 p-1 rounded-full hover:bg-indigo-200" title="แก้ไขข้อความ">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                    </button>
+                `;
+            }
+
             if (canDelete) {
                 deleteButtonHtml = `
                     <button id="delete-btn-${msg.id}" class="text-red-500 hover:text-red-700 transition duration-150 p-1 rounded-full hover:bg-red-200" title="ลบถาวร">
@@ -345,6 +436,11 @@
                     </div>
                 `;
             }
+            
+            // New: Edited tag
+            const editedTag = msg.updatedAt ? 
+                `<span class="text-xs text-gray-400 ml-2">(แก้ไข ${new Date(msg.updatedAt.toDate()).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })})</span>` : '';
+
 
             // กำหนดสัญลักษณ์: 👑 สำหรับเจ้าของ, 💖 สำหรับแฟน, ไม่มีสำหรับคนอื่น
             const adminSymbol = isMessageAdmin ? 
@@ -361,11 +457,12 @@
                     <div class="flex flex-col w-full">
                         ${replyQuoteHtml}
                         <p class="text-lg font-bold ${nameClass} flex items-center">
-                            ${adminSymbol}${sanitizeHtml(msg.nickname)}${userTag}
+                            ${adminSymbol}${sanitizeHtml(msg.nickname)}${userTag}${editedTag}
                         </p>
                         <p class="text-sm mt-1 text-gray-600 break-words">${sanitizeHtml(msg.message)}</p>
                     </div>
-                    <div class="flex items-center space-x-2 flex-shrink-0">
+                    <div class="flex items-center space-x-1 flex-shrink-0">
+                        ${editButtonHtml}
                         <span class="text-xs text-gray-500 mt-1">${time}</span>
                         ${deleteButtonHtml}
                     </div>
@@ -516,25 +613,29 @@
 
             document.getElementById('copy-id-button').addEventListener('click', copyFullId);
             document.getElementById('cancel-reply-button').addEventListener('click', cancelReply);
+            document.getElementById('cancel-edit-button').addEventListener('click', cancelEdit); // NEW: ปุ่มยกเลิกการแก้ไข
         };
     </script>
 </head>
 <body class="min-h-screen p-4 sm:p-8 flex flex-col items-center">
 
     <div class="w-full max-w-2xl bg-white rounded-2xl shadow-2xl p-6 md:p-8">
+        <!-- Header -->
         <header class="mb-6 border-b pb-4">
             <h1 class="text-3xl font-extrabold text-gray-900 mb-1">
                 ส่งข้อความแบบ แชทโลกก
             </h1>
             <p class="text-gray-500">
-                Tips: ปัดข้อความไปทางซ้าย เพื่อตอบกลับ!
+                Tips: ปัดข้อความไปทางซ้าย เพื่อตอบกลับ หรือกดปุ่มแก้ไขสำหรับข้อความของคุณ!
 By พี่มิวฉิค
             </p>
         </header>
 
+        <!-- Input Section -->
         <section class="mb-8 p-5 bg-indigo-50 rounded-xl shadow-inner">
             <h2 class="text-xl font-semibold text-indigo-700 mb-3">โพสต์ข้อความใหม่</h2>
             
+            <!-- NEW: Reply Box UI -->
             <div id="reply-box" class="p-3 mb-4 bg-indigo-100 border-l-4 border-indigo-500 rounded-lg shadow-md hidden">
                 <div class="flex justify-between items-start">
                     <div class="flex-grow min-w-0">
@@ -542,11 +643,13 @@ By พี่มิวฉิค
                         <p class="text-xs text-indigo-500 truncate" id="reply-text"></p>
                     </div>
                     <button id="cancel-reply-button" class="flex-shrink-0 ml-3 text-indigo-500 hover:text-indigo-700" title="ยกเลิกการตอบกลับ">
+                        <!-- Close icon -->
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                     </button>
                 </div>
             </div>
             
+            <!-- Nickname Input -->
             <div class="mb-4">
                 <label for="nickname-input" class="block text-sm font-medium text-gray-700 mb-1">ชื่อเล่นของคุณ (Nickname)</label>
                 <input 
@@ -558,6 +661,7 @@ By พี่มิวฉิค
                 >
             </div>
             
+            <!-- Message Input -->
             <div class="mb-4">
                 <label for="message-input" class="block text-sm font-medium text-gray-700 mb-1">ข้อความที่ต้องการส่ง</label>
                 <textarea 
@@ -570,23 +674,34 @@ By พี่มิวฉิค
                 <p class="text-xs text-gray-500 mt-1">สูงสุด 200 ตัวอักษร</p>
             </div>
 
-            <button 
-                id="send-button" 
-                class="w-full py-3 px-4 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50 transition duration-200 disabled:bg-indigo-400"
-            >
-                ส่งข้อความ
-            </button>
+            <!-- Submit Button & Cancel Edit Container -->
+            <div id="send-button-container" class="block">
+                <button 
+                    id="send-button" 
+                    class="w-full py-3 px-4 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50 transition duration-200 disabled:bg-indigo-400"
+                >
+                    ส่งข้อความ
+                </button>
+                <button id="cancel-edit-button" class="hidden w-full py-3 px-4 mt-3 bg-gray-400 text-white font-bold rounded-xl shadow-lg hover:bg-gray-500 focus:outline-none focus:ring-4 focus:ring-gray-300 focus:ring-opacity-50 transition duration-200 flex-shrink-0">
+                    ยกเลิกการแก้ไข
+                </button>
+            </div>
         </section>
 
+        <!-- Leaderboard Section -->
         <section>
             <h2 class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">กระดานข้อความล่าสุด</h2>
             
             <div id="error-message" class="p-4 bg-red-100 text-red-700 rounded-lg mb-4 text-sm font-medium hidden">
-                </div>
+                <!-- Error messages will be placed here -->
+            </div>
             
+            <!-- Messages Container (The "Leaderboard") -->
             <div id="messages-container" class="max-h-[50vh] overflow-y-auto pr-2">
-                </div>
+                <!-- Messages will be injected here by JavaScript -->
+            </div>
             
+            <!-- Empty State -->
             <div id="empty-state" class="text-center p-8 text-gray-500 bg-gray-50 rounded-xl mt-4 hidden">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -595,6 +710,7 @@ By พี่มิวฉิค
             </div>
         </section>
 
+        <!-- Footer/Info -->
         <footer class="mt-8 pt-4 border-t text-center text-xs text-gray-400">
             <p id="user-id-display" class="mb-2">กำลังเชื่อมต่อ...</p>
             
@@ -602,6 +718,7 @@ By พี่มิวฉิค
                 <span id="full-user-id" class="hidden text-[10px] text-gray-300"></span> 
 
                 <button id="copy-id-button" class="flex items-center space-x-1 px-3 py-1 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition duration-150">
+                    <!-- Copy icon -->
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                     <span>คัดลอกรหัสผู้ใช้ปัจจุบัน</span>
                 </button>
@@ -611,9 +728,12 @@ By พี่มิวฉิค
         </footer>
     </div>
     
+    <!-- Popup Notification -->
     <div id="popup-notification" class="fixed bottom-4 right-4 p-3 rounded-lg shadow-xl text-white z-50 transition-transform duration-300 transform translate-y-20 opacity-0">
-        </div>
+        <!-- Notification message will appear here -->
+    </div>
     
+    <!-- Custom Confirmation Modal (Replaces window.confirm) -->
     <div id="confirm-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 z-[60] flex justify-center items-center hidden">
         <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
             <p id="confirm-message" class="text-lg font-semibold mb-6 text-gray-800">
@@ -631,3 +751,4 @@ By พี่มิวฉิค
     </div>
 </body>
 </html>
+
