@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>กระดานข้อความเรียลไทม์ทั่วโลก</title>
-    <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Use Inter Font -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
         body {
@@ -43,7 +41,6 @@
             cursor: pointer;
         }
     </style>
-    <!-- Firebase Imports -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { 
@@ -81,8 +78,8 @@
         // =================================================================================
         // รหัสเจ้าของหลัก
         const OWNER_UID = "GzGmKIGZSSNpfoiZkj656n7kUPr2"; 
-        // NEW: รหัสผู้ใช้ของแฟนคุณ (Secondary Admin/Partner UID) - กรุณาใส่รหัสจริงแทนที่ข้อความนี้
-        const PARTNER_UID = "PLEASE_INSERT_PARTNER_UID_HERE"; 
+        // NEW: รหัสผู้ใช้ของแฟนคุณ (Secondary Admin/Partner UID) - ถูกแก้ไขแล้ว
+        const PARTNER_UID = "g3vuHEudh5c1w4DCJG7mbRCMUC02"; 
 
         const appId = FIREBASE_CONFIG.projectId || 'default-app-id'; 
         
@@ -525,7 +522,6 @@
 <body class="min-h-screen p-4 sm:p-8 flex flex-col items-center">
 
     <div class="w-full max-w-2xl bg-white rounded-2xl shadow-2xl p-6 md:p-8">
-        <!-- Header -->
         <header class="mb-6 border-b pb-4">
             <h1 class="text-3xl font-extrabold text-gray-900 mb-1">
                 ส่งข้อความแบบ แชทโลกก
@@ -536,11 +532,9 @@ By พี่มิวฉิค
             </p>
         </header>
 
-        <!-- Input Section -->
         <section class="mb-8 p-5 bg-indigo-50 rounded-xl shadow-inner">
             <h2 class="text-xl font-semibold text-indigo-700 mb-3">โพสต์ข้อความใหม่</h2>
             
-            <!-- NEW: Reply Box UI -->
             <div id="reply-box" class="p-3 mb-4 bg-indigo-100 border-l-4 border-indigo-500 rounded-lg shadow-md hidden">
                 <div class="flex justify-between items-start">
                     <div class="flex-grow min-w-0">
@@ -548,13 +542,11 @@ By พี่มิวฉิค
                         <p class="text-xs text-indigo-500 truncate" id="reply-text"></p>
                     </div>
                     <button id="cancel-reply-button" class="flex-shrink-0 ml-3 text-indigo-500 hover:text-indigo-700" title="ยกเลิกการตอบกลับ">
-                        <!-- Close icon -->
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                     </button>
                 </div>
             </div>
             
-            <!-- Nickname Input -->
             <div class="mb-4">
                 <label for="nickname-input" class="block text-sm font-medium text-gray-700 mb-1">ชื่อเล่นของคุณ (Nickname)</label>
                 <input 
@@ -566,7 +558,6 @@ By พี่มิวฉิค
                 >
             </div>
             
-            <!-- Message Input -->
             <div class="mb-4">
                 <label for="message-input" class="block text-sm font-medium text-gray-700 mb-1">ข้อความที่ต้องการส่ง</label>
                 <textarea 
@@ -579,7 +570,6 @@ By พี่มิวฉิค
                 <p class="text-xs text-gray-500 mt-1">สูงสุด 200 ตัวอักษร</p>
             </div>
 
-            <!-- Submit Button -->
             <button 
                 id="send-button" 
                 class="w-full py-3 px-4 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50 transition duration-200 disabled:bg-indigo-400"
@@ -588,20 +578,15 @@ By พี่มิวฉิค
             </button>
         </section>
 
-        <!-- Leaderboard Section -->
         <section>
             <h2 class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">กระดานข้อความล่าสุด</h2>
             
             <div id="error-message" class="p-4 bg-red-100 text-red-700 rounded-lg mb-4 text-sm font-medium hidden">
-                <!-- Error messages will be placed here -->
-            </div>
+                </div>
             
-            <!-- Messages Container (The "Leaderboard") -->
             <div id="messages-container" class="max-h-[50vh] overflow-y-auto pr-2">
-                <!-- Messages will be injected here by JavaScript -->
-            </div>
+                </div>
             
-            <!-- Empty State -->
             <div id="empty-state" class="text-center p-8 text-gray-500 bg-gray-50 rounded-xl mt-4 hidden">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -610,7 +595,6 @@ By พี่มิวฉิค
             </div>
         </section>
 
-        <!-- Footer/Info -->
         <footer class="mt-8 pt-4 border-t text-center text-xs text-gray-400">
             <p id="user-id-display" class="mb-2">กำลังเชื่อมต่อ...</p>
             
@@ -618,7 +602,6 @@ By พี่มิวฉิค
                 <span id="full-user-id" class="hidden text-[10px] text-gray-300"></span> 
 
                 <button id="copy-id-button" class="flex items-center space-x-1 px-3 py-1 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition duration-150">
-                    <!-- Copy icon -->
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                     <span>คัดลอกรหัสผู้ใช้ปัจจุบัน</span>
                 </button>
@@ -628,12 +611,9 @@ By พี่มิวฉิค
         </footer>
     </div>
     
-    <!-- Popup Notification -->
     <div id="popup-notification" class="fixed bottom-4 right-4 p-3 rounded-lg shadow-xl text-white z-50 transition-transform duration-300 transform translate-y-20 opacity-0">
-        <!-- Notification message will appear here -->
-    </div>
+        </div>
     
-    <!-- Custom Confirmation Modal (Replaces window.confirm) -->
     <div id="confirm-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 z-[60] flex justify-center items-center hidden">
         <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
             <p id="confirm-message" class="text-lg font-semibold mb-6 text-gray-800">
@@ -651,4 +631,3 @@ By พี่มิวฉิค
     </div>
 </body>
 </html>
-
