@@ -102,6 +102,53 @@
         let editingMessageId = null; // ID ของข้อความที่กำลังแก้ไข
 
         // --- Core Application Logic ---
+        
+        /**
+         * แปลง Timestamp ให้เป็นรูปแบบเวลาสัมพัทธ์ภาษาไทย
+         * - วันนี้: HH:MM
+         * - เมื่อวาน: เมื่อวาน HH:MM
+         * - เมื่อวานซืน: เมื่อวานซืน HH:MM
+         * - นอกนั้น: DD/MM/YYYY HH:MM (ใช้รูปแบบไทย)
+         * @param {Timestamp} timestamp - Firestore Timestamp object
+         * @returns {string} รูปแบบวันที่/เวลาภาษาไทย
+         */
+        const formatRelativeTime = (timestamp) => {
+            if (!timestamp) return 'เมื่อสักครู่';
+
+            const now = new Date();
+            const messageDate = timestamp.toDate();
+
+            const timeOptions = { hour: '2-digit', minute: '2-digit' };
+            // ใช้รูปแบบวันที่ที่ย่อแล้ว เช่น 29 ก.ย. 2568 
+            const dateOptions = { day: 'numeric', month: 'short', year: 'numeric' }; 
+            
+            // Calculate day difference ( ignoring time )
+            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const messageDayStart = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate());
+            
+            // Time difference in milliseconds
+            const diffTime = todayStart.getTime() - messageDayStart.getTime(); 
+            // Convert to days: 1 day = 24 * 60 * 60 * 1000 ms
+            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)); 
+            
+            const timeStr = messageDate.toLocaleTimeString('th-TH', timeOptions);
+
+            if (diffDays === 0) {
+                // วันนี้ (Today)
+                return timeStr;
+            } else if (diffDays === 1) {
+                // เมื่อวาน (Yesterday)
+                return `เมื่อวาน ${timeStr}`;
+            } else if (diffDays === 2) {
+                // เมื่อวานซืน (Day before yesterday)
+                return `เมื่อวานซืน ${timeStr}`;
+            } else {
+                // วันที่ย่อและเวลา (Older than 2 days)
+                const dateStr = messageDate.toLocaleDateString('th-TH', dateOptions);
+                return `${dateStr} ${timeStr}`;
+            }
+        };
+
 
         const initializeFirebase = async () => {
              // setLogLevel('Debug'); // เปิดใช้งานเพื่อดู log การทำงานของ Firebase
@@ -377,7 +424,8 @@
         };
         
         const createMessageElement = (msg) => {
-            const time = msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : 'เมื่อสักครู่';
+            // ใช้ฟังก์ชันใหม่ในการแสดงผลเวลาที่ละเอียดขึ้น
+            const displayTime = formatRelativeTime(msg.timestamp);
             
             const isCurrentUser = msg.userId === currentUserId;
             const isMessageAdmin = msg.userId === OWNER_UID; 
@@ -437,9 +485,10 @@
                 `;
             }
             
-            // New: Edited tag
-            const editedTag = msg.updatedAt ? 
-                `<span class="text-xs text-gray-400 ml-2">(แก้ไข ${new Date(msg.updatedAt.toDate()).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })})</span>` : '';
+            // New: Edited tag (แสดงแค่เวลา HH:MM)
+            const editedTime = msg.updatedAt ? new Date(msg.updatedAt.toDate()).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '';
+            const editedTag = editedTime ? 
+                `<span class="text-xs text-gray-400 ml-2">(แก้ไข ${editedTime})</span>` : '';
 
 
             // กำหนดสัญลักษณ์: 👑 สำหรับเจ้าของ, 💖 สำหรับแฟน, ไม่มีสำหรับคนอื่น
@@ -472,7 +521,7 @@
                             ${editButtonHtml}
                             ${deleteButtonHtml}
                         </div>
-                        <span class="text-xs text-gray-500">${time}</span>
+                        <span class="text-xs text-gray-500">${displayTime}</span>
                     </div>
                 </div>
             `;
